@@ -12,6 +12,7 @@ starsim/spectra.py
 starsim/spotmap.dat
 starsim/starsim.conf
 starsim/starsim.py
+starsim/starsim_utils.py
 starsim.egg-info/PKG-INFO
 starsim.egg-info/SOURCES.txt
 starsim.egg-info/dependency_links.txt

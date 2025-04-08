@@ -1,10 +1,8 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.2
 Name: starsim
 Version: 3.0.1
 Summary: Spectroscopic and photometric simulation of a spotted rotating star.
 Author: David Baroch, Kike Herrero, Albert Rosich
-License: UNKNOWN
-Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
@@ -13,8 +11,26 @@ Classifier: Topic :: Scientific/Engineering :: Astronomy
 Requires-Python: >=3.6
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: tqdm
+Requires-Dist: numpy
+Requires-Dist: emcee
+Requires-Dist: corner
+Requires-Dist: configparser
+Requires-Dist: matplotlib
+Requires-Dist: astropy
+Requires-Dist: scipy
+Requires-Dist: numba
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # starsim
+
+![](https://github.com/dbarochlopez/starsim/blob/main/starsim.gif)
 
 Starsim can be downloaded from github, and installed using pip. Simply run:
 
@@ -27,5 +43,3 @@ pip install -e .
 Detailed instructions on how to install and run starsim can be found in the jupyter notebook tutorial.ipynb.
 
 To execute it, run in your terminal: `jupyter-notebook tutorial.ipynb`
-
-

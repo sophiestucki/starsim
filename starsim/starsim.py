@@ -240,7 +240,8 @@ class StarSim(object):
         self.planet_spin_orbit_angle = p[17]*np.pi/180 #deg2rad    
 
 
-    def compute_forward(self,observables=['lc'],t=None,inversion=False):
+    def compute_forward(self,observables=['lc'],t=None,inversion=False, w='eq_2'):
+
 
         if inversion==False:
             self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit')) #Repeat this just in case CRX has modified the values
@@ -279,6 +280,7 @@ class StarSim(object):
                     brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
 
                 t,FLUX,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
+                
 
             #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. NOT FACULAE AND NOT PLANETS YET.
             elif self.simulation_mode == 'fast': #in fast mode only immaculate photosphere is computed
@@ -291,11 +293,16 @@ class StarSim(object):
             self.results['ff_sp']=ff_sp
             self.results['ff_pl']=ff_pl
             self.results['ff_fc']=ff_fc
+            
 
 
         if 'rv' in observables or 'bis' in observables or 'fwhm' in observables or 'contrast' in observables: #use HR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
             
-            rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation*np.sin(np.pi/2 - theta)**2)/360) #Add diff rotation
+            if w == 'eq_2':
+                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
+            elif w =='eq_1':
+                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation * np.sin(np.pi/2 - theta)**2) / 360)
+                
             vsini = 1000*2*np.pi*(self.radius*696342)*np.cos(self.inclination)/(rotation_period_lat*86400)
             rvel=vsini*np.sin(theta)*np.sin(phi) #radial velocities of each grid. Inclination already in vsini
 
@@ -304,12 +311,13 @@ class StarSim(object):
             if self.facular_area_ratio>0:
                 wv_rv, flnf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
             spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+            
 
             #Interpolate also Phoenix intensity models to the Phoenix wavelength. 
             # if self.use_phoenix_limb_darkening: 
             acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
             acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-
+            #acd, wv_rv_LR, flfc_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_facula,self.logg)
             #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
             rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
             #CCF with phoenix model  
@@ -332,6 +340,8 @@ class StarSim(object):
                 else:
                     ccf_fc=ccf_ph*0.0
 
+            
+
             #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
             fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
             rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
@@ -339,10 +349,9 @@ class StarSim(object):
             rv_sp = rv - fun_bis_sp(ccf_sp)
             rv_fc = rv_ph
             if self.facular_area_ratio>0:            
-                fun_bis_fc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                rv_fc = rv - fun_bis_fc(ccf_fc)
+                fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
+                rv_fc = rv - fun_raw_xbisc(ccf_fc)
 
-            
             if self.simulation_mode == 'grid':
 
                 ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
@@ -351,19 +360,21 @@ class StarSim(object):
                 ccf_fc_g = ccf_ph_g #to avoid errors, not used
                 if self.facular_area_ratio>0:
                     # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
-                    ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel)
+                    ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
+                    #ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel)
 
-                RV0, C0, F0, B0=spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+
+                RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
 
                 #integrate the ccfs with doppler shifts at each time stamp
-                t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
-
+                t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
+                
 
             #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. 
             elif self.simulation_mode == 'fast': #in fast mode only immaculate photosphere is computed
                 ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
                 ccf_ph_tot = np.sum(ccf_ph_g,axis=0) #CCF of immaculate rotating pphotosphere
-                RV0, C0, F0, B0=spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+                RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
                 
                 t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=nbspectra.generate_rotating_photosphere_fast_rv(self.obs_times,Ngrid_in_ring,acd,amu,pare,rv,rv_ph,rv_sp,rv_fc,ccf_ph_tot,ccf_ph,ccf_sp,ccf_fc,flxph,flpk_rv,flsk_rv,self.n_grid_rings,self.use_phoenix_limb_darkening,self.limb_darkening_law,self.limb_darkening_q1,self.limb_darkening_q2,self.spot_map,self.reference_time,self.rotation_period,self.differential_rotation,self.spots_evo_law,self.facular_area_ratio,self.inclination,self.vsini,self.convective_shift,self.temperature_photosphere,self.temperature_facula,self.simulate_planet,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0,self.planet_period,self.planet_radius,self.planet_impact_param,self.planet_semi_major_axis,self.planet_spin_orbit_angle)
 
@@ -384,11 +395,23 @@ class StarSim(object):
             self.results['ff_pl']=ff_pl
             self.results['ff_fc']=ff_fc
             self.results['CCF']=np.vstack((rv,CCF))
+            self.results['raw_xbis'] = ccf_params[4]
+            self.results['raw_ybis'] = ccf_params[5]
+            self.results['pos'] = vec_pos
+
+            self.results['ccf_ph'] = np.sum(ccf_ph_g,axis=0)
+            self.results['ccf_sp'] = np.sum(ccf_sp_g,axis=0)
+            self.results['ccf_fc'] = np.sum(ccf_fc_g,axis=0)
+
 
 
 
         if 'crx' in observables: #use HR templates in different wavelengths to compute chromatic index. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
-            rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation*np.sin(np.pi/2 - theta)**2)/360) #Add diff rotation
+            if w == 'eq_2':
+                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
+            elif w =='eq_1':
+                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation * np.sin(np.pi/2 - theta)**2) / 360)
+
             vsini = 1000*2*np.pi*(self.radius*696342)*np.cos(self.inclination)/(rotation_period_lat*86400)
             rvel=vsini*np.sin(theta)*np.sin(phi) #radial velocities of each grid. Inclination already in vsini
 
@@ -437,8 +460,8 @@ class StarSim(object):
                 rv_fc = rv_ph
 
                 if self.facular_area_ratio>0:            
-                    fun_bis_fc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                    rv_fc = rv - fun_bis_fc(ccf_fc)
+                    fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
+                    rv_fc = rv - fun_raw_xbisc(ccf_fc)
 
 
                 if self.simulation_mode == 'grid':
@@ -454,10 +477,10 @@ class StarSim(object):
                         # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
                         ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel)
                     
-                    RV0, C0, F0, B0=spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
                     
                     #integrate the ccfs with doppler shifts at each time stamp
-                    t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
+                    t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
 
 
                 #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. 
@@ -465,7 +488,7 @@ class StarSim(object):
                     ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
                     ccf_ph_tot = np.sum(ccf_ph_g,axis=0) #CCF of immaculate rotating pphotosphere
                        
-                    RV0, C0, F0, B0=spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
                     
                     t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=nbspectra.generate_rotating_photosphere_fast_rv(self.obs_times,Ngrid_in_ring,acd,amu,pare,rv,rv_ph,rv_sp,rv_fc,ccf_ph_tot,ccf_ph,ccf_sp,ccf_fc,flxph,flpk_rv,flsk_rv,self.n_grid_rings,self.use_phoenix_limb_darkening,self.limb_darkening_law,self.limb_darkening_q1,self.limb_darkening_q2,self.spot_map,self.reference_time,self.rotation_period,self.differential_rotation,self.spots_evo_law,self.facular_area_ratio,self.inclination,self.vsini,self.convective_shift,self.temperature_photosphere,self.temperature_facula,self.simulate_planet,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0,self.planet_period,self.planet_radius,self.planet_impact_param,self.planet_semi_major_axis,self.planet_spin_orbit_angle)
 
