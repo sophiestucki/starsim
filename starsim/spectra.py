@@ -315,7 +315,7 @@ def generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,bph,bsp,bfc,flx
         for i in range(len(vec_spot)):
             dist=m.acos(np.dot(vec_spot[i],np.array([1,0,0])))
             
-            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio)) <= (np.pi/2):
+            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio[i])) <= (np.pi/2):
                 vis[i]=1.0
         
         if (planet_pos[0]-planet_pos[2]<1):
@@ -753,7 +753,7 @@ def generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,RV,ccf_ph_tot,c
         for i in range(len(vec_spot)):
             dist=m.acos(np.dot(vec_spot[i],np.array([1,0,0])))
             
-            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio)) <= (np.pi/2):
+            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio[i])) <= (np.pi/2):
                 vis[i]=1.0
         
         if (planet_pos[0]-planet_pos[2]<1):
@@ -903,13 +903,13 @@ def compute_spot_position(self,t):
     pos=np.zeros([len(self.spot_map),4])
 
     for i in range(len(self.spot_map)):
-        tini = self.spot_map[i][0] #time of spot apparence
-        dur = self.spot_map[i][1] #duration of the spot
+        tini = self.spot_map[i][1] #time of spot apparence
+        dur = self.spot_map[i][2] #duration of the spot
         tfin = tini + dur #final time of spot
-        colat = self.spot_map[i][2] #colatitude
+        colat = self.spot_map[i][3] #colatitude
         lat = 90 - colat #latitude
-        longi = self.spot_map[i][3] #longitude
-        Rcoef = self.spot_map[i][4::] #coefficients for the evolution od the radius. Depends on the desired law.
+        longi = self.spot_map[i][4] #longitude
+        Rcoef = self.spot_map[i][5::] #coefficients for the evolution od the radius. Depends on the desired law.
 
         #update longitude adding diff rotation
         pht = longi + (t-self.reference_time)/self.rotation_period%1*360 + (t-self.reference_time)*self.differential_rotation/(2.66)*(1.698*np.sin(np.deg2rad(lat))**2+2.346*np.sin(np.deg2rad(lat))**4)
@@ -935,8 +935,8 @@ def compute_spot_position(self,t):
         else:
             sys.exit('Spot evolution law not implemented yet')
         
-        if self.facular_area_ratio!=0.0: #to speed up the code when no fac are present
-            rad_fac=np.deg2rad(rad)*np.sqrt(1+self.facular_area_ratio) 
+        if self.facular_area_ratio[i]!=0.0: #to speed up the code when no fac are present
+            rad_fac=np.deg2rad(rad)*np.sqrt(1+self.facular_area_ratio[i]) 
         else: rad_fac=0.0
 
         pos[i]=np.array([np.deg2rad(colat), np.deg2rad(phsr), np.deg2rad(rad), rad_fac])
@@ -1078,13 +1078,13 @@ def lnlike(P,vparam,fit,typ,self):
 
     N_spots=len(self.spot_map)
     for i in range(N_spots):
-        self.spot_map[i][0]=p[18+i]
-        self.spot_map[i][1]=p[18+N_spots+i]
-        self.spot_map[i][2]=p[18+2*N_spots+i]
-        self.spot_map[i][3]=p[18+3*N_spots+i]
-        self.spot_map[i][4]=p[18+4*N_spots+i]
-        self.spot_map[i][5]=p[18+5*N_spots+i]
-        self.spot_map[i][6]=p[18+6*N_spots+i]
+        self.spot_map[i][1]=p[18+i]
+        self.spot_map[i][2]=p[18+N_spots+i]
+        self.spot_map[i][3]=p[18+2*N_spots+i]
+        self.spot_map[i][4]=p[18+3*N_spots+i]
+        self.spot_map[i][5]=p[18+4*N_spots+i]
+        self.spot_map[i][6]=p[18+5*N_spots+i]
+        self.spot_map[i][7]=p[18+6*N_spots+i]
 
 
     # print(self.temperature_photosphere,self.temperature_spot,self.convective_shift,self.rotation_period,self.inclination,self.radius,self.vsini,self.spot_map[0])

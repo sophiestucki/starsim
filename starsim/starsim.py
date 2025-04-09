@@ -52,7 +52,7 @@ class StarSim(object):
             # self.temperature_facula = self.temperature_photosphere + float(self.conf_file.get('star','facula_T_contrast'))
             self.convective_shift = float(self.conf_file.get('star','convective_shift'))#CB in m/s
             self.logg = float(self.conf_file.get('star','logg'))
-            self.facular_area_ratio = float(self.conf_file.get('star','facular_area_ratio'))
+            self.facular_area_ratio = [] #float(self.conf_file.get('star','facular_area_ratio'))
             self.differential_rotation = float(self.conf_file.get('star','differential_rotation'))
             #rv
             self.ccf_template = str(self.conf_file.get('rv','ccf_template'))
@@ -144,6 +144,7 @@ class StarSim(object):
                 self.spot_map = np.array([self.spot_map]) #to avoid future errors
             elif self.spot_map.ndim == 0:
                 sys.exit('The spot map file spotmap.dat is empty')
+            self.facular_area_ratio = [self.spot_map[i][0] for i in range(len(self.spot_map))]
 
             #select mode
             if self.simulation_mode == 'grid':
@@ -276,7 +277,7 @@ class StarSim(object):
                 brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
                 brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
                 brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp #if there are no faculae
-                if self.facular_area_ratio>0:
+                if np.sum(self.facular_area_ratio)>0:
                     brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
 
                 t,FLUX,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
@@ -308,7 +309,7 @@ class StarSim(object):
 
             wv_rv, flnp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
             wv_rv, flns_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-            if self.facular_area_ratio>0:
+            if np.sum(self.facular_area_ratio)>0:
                 wv_rv, flnf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
             spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
             
@@ -324,7 +325,7 @@ class StarSim(object):
             if self.ccf_template == 'model':
                 ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
                 ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
-                if self.facular_area_ratio>0:            
+                if np.sum(self.facular_area_ratio)>0:            
                     ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
                 else:
                     ccf_fc=ccf_ph*0.0
@@ -335,7 +336,7 @@ class StarSim(object):
 
                 ccf_ph = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnp_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
                 ccf_sp = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flns_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
-                if self.facular_area_ratio>0:
+                if np.sum(self.facular_area_ratio)>0:
                     ccf_fc = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnf_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
                 else:
                     ccf_fc=ccf_ph*0.0
@@ -348,7 +349,7 @@ class StarSim(object):
             fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
             rv_sp = rv - fun_bis_sp(ccf_sp)
             rv_fc = rv_ph
-            if self.facular_area_ratio>0:            
+            if np.sum(self.facular_area_ratio)>0:            
                 fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
                 rv_fc = rv - fun_raw_xbisc(ccf_fc)
 
@@ -358,7 +359,7 @@ class StarSim(object):
                 ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
                 ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
                 ccf_fc_g = ccf_ph_g #to avoid errors, not used
-                if self.facular_area_ratio>0:
+                if np.sum(self.facular_area_ratio)>0:
                     # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
                     ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
                     #ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel)
@@ -433,7 +434,7 @@ class StarSim(object):
 
                 wv_rv, flnp_rv = spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
                 wv_rv, flns_rv = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-                if self.facular_area_ratio>0:
+                if np.sum(self.facular_area_ratio)>0:
                     wv_rv, flnf_rv = spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
                 spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
 
@@ -446,7 +447,7 @@ class StarSim(object):
                 rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
                 ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
                 ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
-                if self.facular_area_ratio>0:            
+                if np.sum(self.facular_area_ratio)>0:            
                     rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
                     ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
                 else:
@@ -459,7 +460,7 @@ class StarSim(object):
                 rv_sp = rv - fun_bis_sp(ccf_sp)
                 rv_fc = rv_ph
 
-                if self.facular_area_ratio>0:            
+                if np.sum(self.facular_area_ratio)>0:            
                     fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
                     rv_fc = rv - fun_raw_xbisc(ccf_fc)
 
@@ -473,7 +474,7 @@ class StarSim(object):
                     # print('Computing spot')
                     ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
                     ccf_fc_g = ccf_ph_g #to avoid errors, not used
-                    if self.facular_area_ratio>0:
+                    if np.sum(self.facular_area_ratio)>0:
                         # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
                         ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel)
                     
@@ -574,13 +575,13 @@ class StarSim(object):
 
         N_spots = len(self.spot_map) #number of spots in spot_map
 
-        fixed_spot_it=[self.spot_map[i][0] for i in range(N_spots)]
-        fixed_spot_lt=[self.spot_map[i][1] for i in range(N_spots)]
-        fixed_spot_lat=[self.spot_map[i][2] for i in range(N_spots)]
-        fixed_spot_lon=[self.spot_map[i][3] for i in range(N_spots)]
-        fixed_spot_c1=[self.spot_map[i][4] for i in range(N_spots)]
-        fixed_spot_c2=[self.spot_map[i][5] for i in range(N_spots)]
-        fixed_spot_c3=[self.spot_map[i][6] for i in range(N_spots)]
+        fixed_spot_it=[self.spot_map[i][1] for i in range(N_spots)]
+        fixed_spot_lt=[self.spot_map[i][2] for i in range(N_spots)]
+        fixed_spot_lat=[self.spot_map[i][3] for i in range(N_spots)]
+        fixed_spot_lon=[self.spot_map[i][4] for i in range(N_spots)]
+        fixed_spot_c1=[self.spot_map[i][5] for i in range(N_spots)]
+        fixed_spot_c2=[self.spot_map[i][6] for i in range(N_spots)]
+        fixed_spot_c3=[self.spot_map[i][7] for i in range(N_spots)]
         fixed_T = self.temperature_photosphere
         fixed_sp_T = self.spot_T_contrast
         fixed_fc_T = self.facula_T_contrast
@@ -630,13 +631,13 @@ class StarSim(object):
 
         lparam=np.array([name_T,name_sp_T,name_fc_T,name_Q,name_CB,name_Prot,name_inc,name_R,name_LD1,name_LD2,name_Pp,name_T0p,name_Kp,name_esinwp,name_ecoswp,name_Rp,name_bp,name_alp,*name_spot_it,*name_spot_lt,*name_spot_lat,*name_spot_lon,*name_spot_c1,*name_spot_c2,*name_spot_c3])
 
-        f_spot_it=[self.spot_map[i][7] for i in range(N_spots)]
-        f_spot_lt=[self.spot_map[i][8]for i in range(N_spots)]
-        f_spot_lat=[self.spot_map[i][9]for i in range(N_spots)]
-        f_spot_lon=[self.spot_map[i][10] for i in range(N_spots)]
-        f_spot_c1=[self.spot_map[i][11] for i in range(N_spots)]
-        f_spot_c2=[self.spot_map[i][12] for i in range(N_spots)]
-        f_spot_c3=[self.spot_map[i][13] for i in range(N_spots)]
+        f_spot_it=[self.spot_map[i][8] for i in range(N_spots)]
+        f_spot_lt=[self.spot_map[i][9]for i in range(N_spots)]
+        f_spot_lat=[self.spot_map[i][10]for i in range(N_spots)]
+        f_spot_lon=[self.spot_map[i][11] for i in range(N_spots)]
+        f_spot_c1=[self.spot_map[i][12] for i in range(N_spots)]
+        f_spot_c2=[self.spot_map[i][13] for i in range(N_spots)]
+        f_spot_c3=[self.spot_map[i][14] for i in range(N_spots)]
         f_T = self.prior_t_eff_ph[0]
         f_sp_T = self.prior_spot_T_contrast[0] 
         f_fc_T = self.prior_facula_T_contrast[0] 
@@ -1335,13 +1336,13 @@ class StarSim(object):
 
             N_spots=len(self.spot_map)
             for i in range(N_spots):
-                self.spot_map[i][0]=p[18+i]
-                self.spot_map[i][1]=p[18+N_spots+i]
-                self.spot_map[i][2]=p[18+2*N_spots+i]
-                self.spot_map[i][3]=p[18+3*N_spots+i]
-                self.spot_map[i][4]=p[18+4*N_spots+i]
-                self.spot_map[i][5]=p[18+5*N_spots+i]
-                self.spot_map[i][6]=p[18+6*N_spots+i]
+                self.spot_map[i][1]=p[18+i]
+                self.spot_map[i][2]=p[18+N_spots+i]
+                self.spot_map[i][3]=p[18+2*N_spots+i]
+                self.spot_map[i][4]=p[18+3*N_spots+i]
+                self.spot_map[i][5]=p[18+4*N_spots+i]
+                self.spot_map[i][6]=p[18+5*N_spots+i]
+                self.spot_map[i][7]=p[18+6*N_spots+i]
 
 
             #np.round(t/step)*step
@@ -1477,7 +1478,7 @@ class StarSim(object):
 
         bestlnL=np.argmax(lnLs)
         for k in range(len(best_maps)):
-            self.spot_map[:,0:7] = best_maps[k]
+            self.spot_map[:,1:8] = best_maps[k]
                         
             #Plot the data
             l=0
@@ -1582,7 +1583,7 @@ class StarSim(object):
             Surface=np.zeros(len(vec_grid[:,0])) #len Ngrids
             for k in range(len(best_maps)):
 
-                self.spot_map[:,0:7]=best_maps[k]
+                self.spot_map[:,1:8]=best_maps[k]
                 spot_pos=spectra.compute_spot_position(self,t) #return colat, longitude and raddii in radians
              
                 vec_spot=np.zeros([len(self.spot_map),3])
@@ -1634,7 +1635,7 @@ class StarSim(object):
         Surface=np.zeros([N_obs,N_div])
         for j in range(N_obs):
             for k in range(len(best_maps)):
-                self.spot_map[:,0:7]=best_maps[k]
+                self.spot_map[:,1:8]=best_maps[k]
                 spot_pos=spectra.compute_spot_position(self,tref[j]) #return colat, longitude and raddii in radians
 
         #update longitude adding diff rotation

@@ -342,13 +342,13 @@ def compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q):
     pos=np.zeros((len(spot_map),4))
 
     for i in range(len(spot_map)):
-        tini = spot_map[i][0] #time of spot apparence
-        dur = spot_map[i][1] #duration of the spot
+        tini = spot_map[i][1] #time of spot apparence
+        dur = spot_map[i][2] #duration of the spot
         tfin = tini + dur #final time of spot
-        colat = spot_map[i][2] #colatitude
+        colat = spot_map[i][3] #colatitude
         lat = 90 - colat #latitude
-        longi = spot_map[i][3] #longitude
-        Rcoef = spot_map[i][4:7] #coefficients for the evolution od the radius. Depends on the desired law.
+        longi = spot_map[i][4] #longitude
+        Rcoef = spot_map[i][5:8] #coefficients for the evolution od the radius. Depends on the desired law.
 
         pht = longi + (t-ref_time)/Prot%1*360
         #update longitude adding diff rotation
@@ -374,8 +374,8 @@ def compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q):
         else:
             print('Spot evolution law not implemented yet. Only constant and linear are implemented.')
         
-        if Q!=0.0: #to speed up the code when no fac are present
-            rad_fac=np.deg2rad(rad)*m.sqrt(1+Q) 
+        if Q[i]!=0.0: #to speed up the code when no fac are present
+            rad_fac=np.deg2rad(rad)*m.sqrt(1+Q[i]) 
         else: rad_fac=0.0
 
         pos[i]=np.array([np.deg2rad(colat), np.deg2rad(phsr), np.deg2rad(rad), rad_fac])
@@ -1035,14 +1035,14 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
 
             dist=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
 
-            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q)) > (m.pi/2): #spot & facula not visible. Jump to next spot.
+            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q[i])) > (m.pi/2): #spot & facula not visible. Jump to next spot.
                 continue
             
             beta=np.pi/2-dist #angle of the spot with the edge of the star
             alpha=spot_pos[i,2] #angle of the radii of the spot
             ############ FACULA PROJECTED AREA ##################
-            if Q>0.0: #facula
-                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q) #angle of the radii of the faculae
+            if Q[i]>0.0: #facula
+                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q[i]) #angle of the radii of the faculae
                 #CASE 1: FACULA OUTSIDE OUTSIDE-> NULL, ALREADY EVALUATED BEFORE
                 
                 #CASE 2: ALL FACULAE INSIDE -> ELLIPSE 
@@ -1155,7 +1155,7 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
 
 
 
-            if Q>0.0:
+            if Q[i]>0.0:
 
                 pare_facula= pare_fac - pare_spot
 
@@ -1201,7 +1201,7 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
                 block='ph'
                 for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
                     distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q)) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
+                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
                         block='ph'
                         continue 
 
@@ -1212,7 +1212,7 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
                             block='ph'
                         else:
                             block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q): #if the distance is lower than facula radius, most of the planet is inside the facula
+                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
                             block = 'fc'
                     elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
                         block = 'ph' #else, the planet is blocking photosphere
@@ -1228,7 +1228,7 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
                 block='ph'
                 for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
                     distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q)) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
+                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
                         block='ph'
                         continue 
 
@@ -1239,7 +1239,7 @@ def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,f
                             block='ph'
                         else:
                             block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q): #if the distance is lower than facula radius, most of the planet is inside the facula
+                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
                         block = 'fc'
                     elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
                         block = 'ph' #else, the planet is blocking photosphere
@@ -1360,7 +1360,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
         if spot_map.size==0:
             spot_pos=np.expand_dims(np.array([m.pi/2,-m.pi,0.0,0.0]),axis=0)
         else:
-            spot_pos=compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q) #compute the position of all spots at the current time. Returns theta and phi of each spot.      
+            spot_pos=compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q) #Q or Q[i]??? #compute the position of all spots at the current time. Returns theta and phi of each spot.      
 
         #convert latitude/longitude of spot centre to XYZ
         vec_spot=np.zeros((len(spot_map),3))
@@ -1379,15 +1379,15 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
 
             dist=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
 
-            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q)) > (m.pi/2): #spot & facula not visible. Jump to next spot.
+            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q[i])) > (m.pi/2): #spot & facula not visible. Jump to next spot.
                 continue
             
             beta=np.pi/2-dist #angle of te spot with the edge of the star
             alpha=spot_pos[i,2] #angle of the radii of the spot
             
             ############ FACULA PROJECTED AREA ##################
-            if Q>0.0: #facula
-                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q) #angle of the radii of the faculae
+            if Q[i]>0.0: #facula
+                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q[i]) #angle of the radii of the faculae
                 #CASE 1: FACULA OUTSIDE OUTSIDE-> NULL, ALREADY EVALUATED BEFORE
                 
                 #CASE 2: ALL FACULAE INSIDE -> ELLIPSE 
@@ -1548,7 +1548,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
             CCF_phsp = ccf_phsp*flux_phsp/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
             CCF_spph = ccf_spph*flux_spph/fluxph
 
-            if Q>0.0:
+            if Q[i]>0.0:
 
                 pare_facula= pare_fac - pare_spot
 
@@ -1612,7 +1612,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
                 block='ph'
                 for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
                     distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q)) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
+                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
                         block='ph'
                         continue 
 
@@ -1623,7 +1623,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
                             block='ph'
                         else:
                             block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q): #if the distance is lower than facula radius, most of the planet is inside the facula
+                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
                             block = 'fc'
                     elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
                         block = 'ph' #else, the planet is blocking photosphere
@@ -1647,7 +1647,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
                 block='ph'
                 for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
                     distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q)) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
+                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
                         block='ph'
                         continue 
 
@@ -1658,7 +1658,7 @@ def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,r
                             block='ph'
                         else:
                             block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q): #if the distance is lower than facula radius, most of the planet is inside the facula
+                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
                         block = 'fc'
                     elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
                         block = 'ph' #else, the planet is blocking photosphere
@@ -1748,21 +1748,21 @@ def check_spot_overlap(spot_map,Q):
     N_spots=len(spot_map)
     for i in range(N_spots):
         for j in range(i+1,N_spots):
-            t_ini_0 = spot_map[i][0]
-            t_ini = spot_map[j][0]
-            t_fin_0 = t_ini_0 + spot_map[i][1]
-            t_fin = t_ini + spot_map[j][1]
-            r_0 = np.max(spot_map[i][4:6])
-            r = np.max(spot_map[j][4:6])
-            th_0 = m.pi/2-spot_map[i][2]*m.pi/180 #latitude in radians
-            th = m.pi/2-spot_map[j][2]*m.pi/180 #latitude in radians
-            ph_0 = spot_map[i][3]*m.pi/180 #longitude in radians
-            ph = spot_map[j][3]*m.pi/180 #longitude in radians
+            t_ini_0 = spot_map[i][1]
+            t_ini = spot_map[j][1]
+            t_fin_0 = t_ini_0 + spot_map[i][2]
+            t_fin = t_ini + spot_map[j][2]
+            r_0 = np.max(spot_map[i][5:7])
+            r = np.max(spot_map[j][5:7])
+            th_0 = m.pi/2-spot_map[i][3]*m.pi/180 #latitude in radians
+            th = m.pi/2-spot_map[j][3]*m.pi/180 #latitude in radians
+            ph_0 = spot_map[i][4]*m.pi/180 #longitude in radians
+            ph = spot_map[j][4]*m.pi/180 #longitude in radians
             
 
             dist = m.acos(m.sin(th_0)*m.sin(th) + m.cos(th_0)*m.cos(th)*m.cos(m.fabs(ph_0 - ph)))*180/m.pi #in
 
-            if (dist<m.sqrt(Q+1)*(r_0+r)) and not ((t_ini>t_fin_0) or (t_ini_0>t_fin)): #if they touch and coincide in time
+            if (dist<m.sqrt(Q[i]+1)*(r_0+r)) and not ((t_ini>t_fin_0) or (t_ini_0>t_fin)): #if they touch and coincide in time
                 return True
             
     return False
