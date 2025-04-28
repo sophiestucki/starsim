@@ -8,6 +8,10 @@ from scipy import interpolate
 import sys
 import math as m
 from . import nbspectra
+import pickle
+import os
+import shutil
+from configparser import ConfigParser
 
 
 
@@ -198,14 +202,14 @@ def limb_brightening_fc_spec(self, amu, wv):
 
 
 def limb_brightening_bol(self, amu):
-    return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2) * (self.facula_T_contrast / 34.1)) / self.temperature_photosphere)**4
+    return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2)) / self.temperature_photosphere)**4
     # return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2)) / self.temperature_photosphere)**4 * ((self.temperature_photosphere + self.facula_T_contrast )/ 5808)**4
     # return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2)) / (self.temperature_photosphere + self.facula_T_contrast))**4
     # return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2) * ((self.temperature_photosphere + self.facula_T_contrast) / 5808)) / self.temperature_photosphere)**4
     # return ((self.temperature_photosphere + (250.9-407.7*amu+190.9*amu**2-34.1) * (self.facula_T_contrast / 250.9) + 34.1) / self.temperature_photosphere)**4
 
 
-def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
+def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv,active_region_type): #Oscar: I added an active region type in order to know which Imu curves I should output so as to determine the limb darkening coefficients.
 
 
     N = self.n_grid_rings #Number of concentric rings
@@ -223,13 +227,42 @@ def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv):
             idx_low=np.where(acd==acd_low)[0][0]
             idx_upp=np.where(acd==acd_upp)[0][0]
             dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
+            if self.return_Imu==1 and active_region_type=='ph':
+                os.makedirs(os.path.dirname('Imu_curves/Imu_dlp_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
+                with open('Imu_curves/Imu_dlp_{}.pickle'.format(i), 'wb') as handle:
+                    #pickle.dump(dlp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    pickle.dump([dlp,amu[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    #pickle.dump(np.array([dlp,amu[i]]), handle, protocol=pickle.HIGHEST_PROTOCOL)
+                #np.save('Imu_curves/Imu_dlp_{}.npy'.format(i),dlp)
+                #np.save('Imu_curves/Imu_dlp_{}.npy'.format(i),np.array([dlp,amu[i]],dtype=object))
+                #np.savetxt('Imu_curves/Imu_dlp_{}.txt'.format(i),np.array(dlp),delimiter='\t')
+                #np.savetxt('Imu_curves/Imu_dlp_{}.txt'.format(i),np.array([dlp,amu[i]]),delimiter='\t')
         
         else: #or use a specified limb darkening law
             dlp = flnp[0]*limb_darkening_law(self,amu[i])
 
 
         flp[i,:]=dlp*pare[i]/(4*np.pi)*f_filt(wv) #spectra of one grid in ring N multiplied by the filter.
-        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.  
+        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.
+        
+        if self.return_Imu==1 and active_region_type=='ph':
+            os.makedirs(os.path.dirname('Imu_curves/Imu_flp_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
+            with open('Imu_curves/Imu_flp_{}.pickle'.format(i), 'wb') as handle:
+                pickle.dump([flp[i,:],amu[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+                #pickle.dump(np.array([sflp[i],amu[i]]), handle, protocol=pickle.HIGHEST_PROTOCOL)
+            #np.save('Imu_curves/Imu_sflp_{}.npy',format(i),np.array([sflp[i],amu[i]]),delimiter='\t')
+            #np.savetxt('Imu_curves/Imu_sflp_{}.txt',format(i),sflp,delimiter='\t')
+            #np.savetxt('Imu_curves/Imu_sflp_{}.txt',format(i),np.array([sflp[i],amu[i]]),delimiter='\t')
+        
+        if self.return_Imu==1 and active_region_type=='ph':
+            os.makedirs(os.path.dirname('Imu_curves/Imu_sflp_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
+            with open('Imu_curves/Imu_sflp_{}.pickle'.format(i), 'wb') as handle:
+                pickle.dump([sflp[i],amu[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+                #pickle.dump(np.array([sflp[i],amu[i]]), handle, protocol=pickle.HIGHEST_PROTOCOL)
+            #np.save('Imu_curves/Imu_sflp_{}.npy',format(i),np.array([sflp[i],amu[i]]),delimiter='\t')
+            #np.savetxt('Imu_curves/Imu_sflp_{}.txt',format(i),sflp,delimiter='\t')
+            #np.savetxt('Imu_curves/Imu_sflp_{}.txt',format(i),np.array([sflp[i],amu[i]]),delimiter='\t')
+        
         flxph=flxph+sflp[i]*Ngrid_in_ring[i] #total BRIGHTNESS of the immaculate photosphere
     
     
@@ -352,6 +385,419 @@ def generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,bph,bsp,bfc,flx
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+########################################################################################
+########################################################################################
+#           SPECTROPHOTOMETRY FUNCTIONS ('spec', OSCAR - under development)            #
+########################################################################################
+########################################################################################
+
+
+
+
+
+def compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp,wv,active_region_type): #Oscar: I added an active region type in order to know which Imu curves and other arrays I should output for debugging.
+
+
+    N = self.n_grid_rings #Number of concentric rings
+    spec_ph = np.zeros(len(wv)) #initialze spectrum of photosphere
+    spec_rings_ph=np.zeros([N,len(wv)]) #spectrum of each ring
+
+    #Computing flux of immaculate photosphere and of every pixel
+    for i in range(0,N): #Loop for each ring, to compute the flux of the star.   
+
+        #Interpolate Phoenix intensity models to correct projected ange:
+        if self.use_phoenix_limb_darkening:
+            acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
+            acd_upp=np.min(acd[acd>=amu[i]])
+            idx_low=np.where(acd==acd_low)[0][0]
+            idx_upp=np.where(acd==acd_upp)[0][0]
+            dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
+            if self.return_Imu==1 and active_region_type=='ph':
+                os.makedirs(os.path.dirname('Imu_curves/Imu_dlp_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
+                with open('Imu_curves/Imu_dlp_{}.pickle'.format(i), 'wb') as handle:
+                    pickle.dump([dlp,amu[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        else: #or use a specified limb darkening law
+            dlp = flnp[0]*limb_darkening_law(self,amu[i])
+        
+
+
+        spec_rings_ph[i,:]=dlp*pare[i]/(4*np.pi) #spectrum of one grid in ring N.
+
+        if active_region_type == 'fc':
+            spec_rings_ph[i,:]  *= limb_brightening_bol(self, amu[i])
+
+
+        
+        if self.return_Imu==1 and active_region_type=='ph':
+            os.makedirs(os.path.dirname('Imu_curves/Imu_spec_rings_ph_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
+            with open('Imu_curves/Imu_spec_rings_ph_{}.pickle'.format(i), 'wb') as handle:
+                pickle.dump([spec_rings_ph[i,:],amu[i]], handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+    
+        
+        
+        spec_ph=spec_ph+spec_rings_ph[i,:]*Ngrid_in_ring[i] #total BRIGHTNESS of the immaculate photosphere
+        #Why multiply by Ngrid_in_ring[i]??? Answer: Ï think it's because we calculated the spectrum of one pixel in ring N, and then we multiply it by the number of pixels in that ring. The code says "grid" instead of "pixel".
+            #an element of an array,
+            #an entry (or an element) of a matrix,
+            #a cell of a grid.
+        
+    if self.return_Imu==1 and active_region_type=='ph':
+        os.makedirs(os.path.dirname('Imu_curves/spec_ph.pickle'), exist_ok=True) #Check if directory exists, if not then create it
+        with open('Imu_curves/spec_ph.pickle', 'wb') as handle:
+            pickle.dump(spec_ph, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    if self.return_Imu==1 and active_region_type=='ph':
+        os.makedirs(os.path.dirname('Imu_curves/Ngrid_in_ring.pickle'), exist_ok=True) #Check if directory exists, if not then create it
+        with open('Imu_curves/Ngrid_in_ring.pickle', 'wb') as handle:
+            pickle.dump(Ngrid_in_ring, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    
+    return spec_rings_ph, spec_ph
+
+
+
+
+#t,SPEC,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_spec(self,Ngrid_in_ring,pare,amu,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
+def generate_rotating_photosphere_spec(self,Ngrid_in_ring,pare,amu,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vec_grid,inversion,plot_map=True):
+    '''Loop for all the pixels and assign the spectrum corresponding to the grid element.
+    '''
+    simulate_planet=self.simulate_planet
+    N = self.n_grid_rings #Number of concentric rings
+    
+    iteration=0
+
+    #Now loop for each Observed time and for each grid element. Compute if the grid is ph spot or fc and assign the corresponding CCF.
+    # print('Diff rotation law is hard coded. Check ref time for inverse problem. Add more Spot evo laws')
+    if not inversion:
+        sys.stdout.write(" ")
+    spec=np.zeros([len(self.obs_times),len(spec_ph)]) #initialize total spectrum at each timestamp
+    filling_sp=np.zeros(len(self.obs_times))
+    filling_ph=np.zeros(len(self.obs_times))
+    filling_pl=np.zeros(len(self.obs_times))
+    filling_fc=np.zeros(len(self.obs_times))
+
+    for k,t in enumerate(self.obs_times):
+        typ=[] #type of grid, ph sp or fc
+        
+        if simulate_planet:
+            planet_pos=compute_planet_pos(self,t)#compute the planet position at current time. In polar coordinates!! 
+        else:
+            planet_pos = [2.0,0.0,0.0]
+
+
+        if self.spot_map.size==0:
+            spot_pos=np.array([np.array([m.pi/2,-m.pi,0.0,0.0])])
+        else:
+            spot_pos=compute_spot_position(self,t) #compute the position of all spots at the current time. Returns theta and phi of each spot.      
+
+        vec_spot=np.zeros([len(self.spot_map),3])
+        xspot = np.cos(self.inclination)*np.sin(spot_pos[:,0])*np.cos(spot_pos[:,1])+np.sin(self.inclination)*np.cos(spot_pos[:,0])
+        yspot = np.sin(spot_pos[:,0])*np.sin(spot_pos[:,1])
+        zspot = np.cos(spot_pos[:,0])*np.cos(self.inclination)-np.sin(self.inclination)*np.sin(spot_pos[:,0])*np.cos(spot_pos[:,1])
+        vec_spot[:,:]=np.array([xspot,yspot,zspot]).T #spot center in cartesian
+
+        #COMPUTE IF ANY SPOT IS VISIBLE
+        vis=np.zeros(len(vec_spot)+1)
+        for i in range(len(vec_spot)):
+            dist=m.acos(np.dot(vec_spot[i],np.array([1,0,0])))
+            
+            if (dist-spot_pos[i,2]*np.sqrt(1+self.facular_area_ratio[i])) <= (np.pi/2):
+                vis[i]=1.0
+        
+        if (planet_pos[0]-planet_pos[2]<1):
+            vis[-1]=1.0
+ 
+
+
+        #Loop for each ring.
+        if (np.sum(vis)==0.0):
+            spec[k,:],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = spec_ph, [[1.0,0.0,0.0,0.0]]*np.sum(Ngrid_in_ring), np.dot(Ngrid_in_ring,pare), 0.0, 0.0, 0.0
+        else:
+            spec[k,:],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = nbspectra.loop_generate_rotating_spec_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vis)
+
+
+        filling_ph[k]=100*filling_ph[k]/np.dot(Ngrid_in_ring,pare)
+        filling_sp[k]=100*filling_sp[k]/np.dot(Ngrid_in_ring,pare)
+        filling_fc[k]=100*filling_fc[k]/np.dot(Ngrid_in_ring,pare)
+        filling_pl[k]=100*filling_pl[k]/np.dot(Ngrid_in_ring,pare)
+        
+        if not inversion:
+            sys.stdout.write("\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. [{5}/{6}]%".format(t,filling_ph[k],filling_sp[k],filling_fc[k],filling_pl[k],k+1,len(self.obs_times)))
+
+        if plot_map:
+            plot_spot_map_grid(self,vec_grid,typ,self.inclination,t)
+
+    return self.obs_times, spec, filling_ph, filling_sp, filling_fc, filling_pl
+    #return self.obs_times, flux/flxph, filling_ph, filling_sp, filling_fc, filling_pl
+
+
+
+
+
+
+###############################################################
+### Functions to convolve spectral time series with filters ###
+###############################################################
+def interpolate_specified_filter_spec(self,filter_name):
+    """
+    
+
+    Parameters
+    ----------
+    filter_name : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    f : TYPE
+        DESCRIPTION.
+
+    """
+    path = self.path / 'models' / 'filters' / filter_name
+
+    try:
+        wv, filt = np.loadtxt(path,unpack=True)
+    except: #if the filter do not exist, create a tophat filter from the wv range
+        wv=np.array([self.wavelength_lower_limit,self.wavelength_upper_limit])
+        filt=np.array([1,1])
+        print('Filter ',self.filter_name,' do not exist inside the filters folder. Using wavelength range in starsim.conf. Filters are available at http://svo2.cab.inta-csic.es/svo/theory/fps3/')
+
+    f = interpolate.interp1d(wv,filt,bounds_error=False,fill_value=0)
+
+    return f
+
+
+def convolve_spec_with_specified_filter(self,t=None,spec=None,wv=None,filter_name=None,vectorise=True):
+    if t is None:
+        t = self.results['time']
+    if spec is None:
+        spec = self.results['spec']
+    if wv is None:
+        wv = self.results['spec_wv']
+    if filter_name is None:
+        filter_name = self.filter_name
+    """
+    Convolves spectral time series (by default self.results['spec']) with the selected filter (by default self.filter_name from the config file) in order to produce a light curve.
+
+    Parameters
+    ----------
+    t : TYPE, optional
+        DESCRIPTION. The default is self.results['time'].
+    spec : TYPE, optional
+        DESCRIPTION. The default is self.results['spec'].
+    wv : TYPE, optional
+        DESCRIPTION. The default is self.results['spec_wv'].
+    filter_name : TYPE, optional
+        DESCRIPTION. The default is self.filter_name.
+    vectorise : TYPE, optional
+        DESCRIPTION. The default is True.
+
+    Returns
+    -------
+    spec_lc : TYPE
+        Spectral light curve.
+
+    """
+
+    if vectorise:
+        # Read filter and interpolate it in order to convolve it with the spectra
+        f_filt = interpolate_specified_filter_spec(self, filter_name)
+        
+        # Convolve spectra with the filter using vectorized operations
+        spec_conv_filt = spec * f_filt(wv)  # Element-wise multiplication
+        
+        # Sum the convolved spectra along the wavelength axis to get brightness for each time step
+        spec_lc = np.sum(spec_conv_filt, axis=1)  # Collapse the wavelength dimension
+        
+        return spec_lc
+    else:
+        #Read filter and interpolate it in order to convolve it with the spectra
+        f_filt = interpolate_specified_filter_spec(self,filter_name)
+        spec_lc=np.zeros(len(t)) #brightness for each time step
+        spec_conv_filt=np.zeros([len(t),len(wv)]) #spectra for each time step convolved with filter
+        
+        for k in range(len(t)):
+            spec_conv_filt[k,:]=spec[k,:]*f_filt(wv) #convolve with filter
+            spec_lc[k]=np.sum(spec_conv_filt[k,:])
+        
+        return spec_lc
+
+
+
+
+def modify_conf_file(file_path, section, parameter, new_value):
+    """
+    
+
+    Parameters
+    ----------
+    file_path : TYPE
+        DESCRIPTION.
+    section : TYPE
+        DESCRIPTION.
+    parameter : TYPE
+        DESCRIPTION.
+    new_value : TYPE
+        DESCRIPTION.
+
+    Raises
+    ------
+    FileNotFoundError
+        DESCRIPTION.
+    ValueError
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    """
+    # Create a ConfigParser object
+    config = ConfigParser(inline_comment_prefixes='#')
+
+    # Read the existing configuration from the file
+    if not config.read([file_path]):
+        raise FileNotFoundError(f"The configuration file at '{file_path}' could not be read. Please check the format and/or path.")
+    
+    #config.read(file_path)
+
+    # Check if the specified section exists
+    if section not in config:
+        raise ValueError(f"Section '{section}' does not exist in the configuration file.")
+    
+    #Check if the specified parameter exists
+    if parameter not in config[section]:
+        raise ValueError(f"Parameter '{parameter}' does not exist in section '{section}' of the configuration file.")
+    
+    # Modify the desired parameter in the specified section
+    config[section][parameter] = str(new_value)
+    
+    # Write the modified configuration back to the file
+    with open(file_path, 'w') as config_file:
+        config.write(config_file)
+
+
+
+
+def generate_temporary_filters_and_conf_files(self,temp_filters_wv_range,temp_filters_wv_step,filter_directory,conf_directory):
+    """
+    Create flat filter files for each wv and create config files for each wv.
+
+    Parameters
+    ----------
+    temp_filters_wv_range : TYPE
+        DESCRIPTION.
+    temp_filters_wv_step : TYPE
+        DESCRIPTION.
+    filter_directory : TYPE
+        DESCRIPTION.
+    conf_directory : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    """
+    
+    min_wv,max_wv = temp_filters_wv_range
+    step_wv = temp_filters_wv_step
+    wvs = np.arange(min_wv,max_wv,step_wv)
+    
+    # Ensure the filter and configuration directories exist
+    os.makedirs(filter_directory, exist_ok=True)
+    os.makedirs(conf_directory, exist_ok=True)
+    
+    #Create flat filter files for each wv:
+    # Loop through each wavelength
+    for wv in wvs:
+        filter_filename = "{}.dat".format(wv)
+        filepath = os.path.join(filter_directory, filter_filename)
+        
+        
+        with open(filepath, "w") as f:
+            # Write filter values to the file
+            f.write("{:.1f} {:.1f}\n{:.1f} {:.1f}\n{:.1f} {:.1f}\n{:.1f} {:.1f}\n{:.1f} {:.1f}\n{:.1f} {:.1f}\n{:.1f} {:.1f}".format(wv-step_wv-1.0,0.0,
+wv-step_wv-0.1,0.0,
+wv-step_wv,1.0,
+wv,1.0,
+wv+step_wv,1.0,
+wv+step_wv+0.1,0.0,
+wv+step_wv+1.0,0.0))
+            #Potser provar un valor inferior a 0.1!!! Per si de cas canviem els espectres? Mirar quin és el sampling dels Phoenix spectra... -> els SPECINT el step és de 1.0A
+    
+    # Define the original configuration file path
+    original_conf_file = str(self.conf_file_path)
+    
+    
+    #Create config files for each wv:
+    # Loop through each wavelength
+    filter_paths_from_filters_folder = []
+    for wv in wvs:
+        conf_filename = '{}.conf'.format(wv)
+        conf_filepath = os.path.join(conf_directory, conf_filename)
+    
+        # Copy the original configuration file to the new file location
+        shutil.copy(original_conf_file, conf_filepath)
+        
+        
+        
+        #Get filter path relative to filters/:
+            # Convert filter_directory to a Path object if it's not already
+        filter_directory_path_obj = Path(filter_directory)
+        
+            # Find the part of the path that comes after "filters/"
+        relative_path_from_filters = filter_directory_path_obj.relative_to(self.path / 'models/filters')
+        
+            # Format the filename
+        filter_filename_template = "{}.dat"
+        formatted_filter_filename_str = f"{relative_path_from_filters}/{filter_filename_template.format(wv)}"
+        filter_paths_from_filters_folder.append(formatted_filter_filename_str)
+        
+
+        modify_conf_file(conf_filepath,
+                        'files',
+                        'filter_name',
+                        formatted_filter_filename_str)
+        modify_conf_file(conf_filepath,
+                        'general',
+                        'wavelength_lower_limit',
+                         500.0)
+                        #max(wv-200*step_wv-1.0,5.0))
+        modify_conf_file(conf_filepath,
+                        'general',
+                        'wavelength_upper_limit',
+                        min(min(wv+200*step_wv+1.0,wv+10000),26000))
+    
+    
+    return filter_paths_from_filters_folder
+        
+
+
+
+
+
+
+
+
+
 ########################################################################################
 ########################################################################################
 #                              SPECTROSCOPY FUNCTIONS                                  #
@@ -460,7 +906,7 @@ def interpolate_Phoenix(self,temp,grav,plot=False):
         plt.show()
         plt.close()
 
-    interpolated_spectra = np.array([wv,flux_norm])
+    interpolated_spectra = np.array([wv,flux_norm,flux])
 
     return interpolated_spectra
 

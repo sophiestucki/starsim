@@ -607,8 +607,7 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
     aph=1-asp-afc-apl         
 
     #add the corresponding ccf to the total CCF
-    ccf_tot = ccf_tot  - (1-aph)*ccf_ph[iteration] + asp*ccf_sp[iteration] + afc*ccf_fc[iteration] 
-
+    ccf_tot = ccf_tot  - (1-aph)*ccf_ph[iteration] + asp*ccf_sp[iteration] + afc*ccf_fc[iteration]     
 
     Aph=aph*pare[0]
     Asp=asp*pare[0]
@@ -732,7 +731,6 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
             Apl=Apl+apl*pare[i]
             typ.append([aph,asp,afc,apl])
 
-            
 
     return ccf_tot,typ, Aph, Asp, Afc, Apl
 
@@ -837,18 +835,16 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
         asp=asp*(1-apl)
         afc=afc*(1-apl)
 
-    aph=1-asp-afc-apl           
+    aph=1-asp-afc-apl    
 
     #add the corresponding flux to the total flux
-    flux = flux - (1-aph)*bph[i]+asp*bsp[i]+bfc[i]*afc
-
+    flux = flux - (1-aph)*bph[0]+asp*bsp[0]+bfc[0]*afc
 
     Aph=aph*pare[0]
     Asp=asp*pare[0]
     Afc=afc*pare[0]
     Apl=apl*pare[0]
     typ=[[aph,asp,afc,apl]]
-
 
     ############### OTHER GRIDS #######################
     # NOW DO THE SAME FOR THE REST OF GRIDS
@@ -1766,3 +1762,251 @@ def check_spot_overlap(spot_map,Q):
                 return True
             
     return False
+
+
+
+
+
+
+
+########################################################################################
+########################################################################################
+#           SPECTROPHOTOMETRY FUNCTIONS ('spec', OSCAR - under development)            #
+########################################################################################
+########################################################################################
+
+#spec[k,:],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = nbspectra.loop_generate_rotating_spec_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vis)
+@nb.njit(cache=True,error_model='numpy')
+def loop_generate_rotating_spec_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vis):
+ 
+
+    #define things
+    width=np.pi/(2*N-1) #width of one grid element, in radiants
+    spec = spec_ph
+
+
+    vis_spots_idx=[]
+    for i in range(len(vis)-1):
+        if vis[i]==1.0:
+            vis_spots_idx.append(i)
+    ###################### CENTRAL GRID ###############################
+    #Central grid is different since it is a circle. initialize values.
+    ####################################################################
+    dsp=0.0 #fraction covered by each spot
+    dfc=0.0
+    asp=0.0 #fraction covered by all spots
+    afc=0.0
+    apl=0.0
+    iteration = 0
+    
+    for l in vis_spots_idx: #for each spot
+
+        if spot_pos[l][2]==0.0:
+            continue
+
+        dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #compute the distance to the grid
+
+        if dist>(width/2+spot_pos[l][2]):
+            dsp=0.0
+        else:
+            if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
+                    dsp=1.0
+                else:  #grid partially covered
+                    dsp=-(dist-spot_pos[l][2]-width/2)/width
+
+            else: #the grid can completely cover the spot, two cases:
+                if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                    dsp=(2*spot_pos[l][2]/width)**2                 
+                else: #grid partially covered
+                    dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
+
+
+        asp+=dsp
+        #FACULA
+        if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
+            continue 
+
+        if dist>(width/2+spot_pos[l][3]):
+            dfc=0.0
+        else:
+            if (width/2)<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
+                if dist<=spot_pos[l][3]-(width/2):  #grid completely covered
+                    dfc=1.0 - dsp
+                else:  #grid partially covered
+                    dfc=-(dist-spot_pos[l][3]-width/2)/width - dsp
+
+            else: #if the grid can completely cover the spot, two cases:
+                if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
+                    dfc=(2*spot_pos[l][3]/width)**2 - dsp                
+                else: #grid partially covered
+                    dfc =-2*spot_pos[l][3]*(dist-width/2-spot_pos[l][3])/width**2 - dsp
+
+        afc+=dfc
+
+
+    #PLANET
+    if simulate_planet:
+        if vis[-1]==1.0:
+            dist=m.sqrt((planet_pos[0]*m.cos(planet_pos[1]) - vec_grid[iteration,1])**2 + ( planet_pos[0]*m.sin(planet_pos[1]) - vec_grid[iteration,2] )**2) #grid-planet distance
+            
+            width2=2*m.sin(width/2)
+            if dist>width2/2+planet_pos[2]: apl=0.0
+            elif dist<planet_pos[2]-width2/2: apl=1.0
+            else: apl=-(dist-planet_pos[2]-width2/2)/width2
+
+    
+    if afc>1.0:
+        afc=1.0
+
+    if asp>1.0:
+        asp=1.0
+        afc=0.0
+
+    if apl>1.0:
+        apl=1.0
+        asp=0.0
+        afc=0.0
+
+    if afc + asp > 1.0:
+        afc = 1.0 - asp
+
+    if apl>0.0:
+        asp=asp*(1-apl)
+        afc=afc*(1-apl)
+
+    aph=1-asp-afc-apl           
+
+    #add the corresponding spectrum flux to the total spectrum
+    spec = spec - (1-aph)*spec_rings_ph[0,:]+asp*spec_rings_sp[0,:]+spec_rings_fc[0,:]*afc
+    #spec = spec - (1-aph)*bph[i]+asp*bsp[i]+bfc[i]*afc
+
+
+    Aph=aph*pare[0]
+    Asp=asp*pare[0]
+    Afc=afc*pare[0]
+    Apl=apl*pare[0]
+    typ=[[aph,asp,afc,apl]]
+
+
+    ############### OTHER GRIDS #######################
+    # NOW DO THE SAME FOR THE REST OF GRIDS
+    ###################################################
+    for i in range(1,N): #Loop for each ring.
+        for j in range(Ngrid_in_ring[i]): #Loop for each grid
+            iteration+=1
+
+            dsp=0.0 #fraction covered by each spot
+            dfc=0.0
+            asp=0.0 #fraction covered by all spots
+            afc=0.0
+            apl=0.0
+
+            for l in vis_spots_idx:
+                
+                if spot_pos[l][2]==0.0: #if radius=0, there is no spot, jump to next spot with continue
+                    continue 
+
+                dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #distance between spot centre and grid,multiplying two unit vectors
+
+
+                #SPOT
+                if dist>(width/2+spot_pos[l][2]): #grid not covered 
+                    dsp=0.0
+                
+                else:
+                    if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                        if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
+                            dsp=1.0
+                        else:  #grid partially covered
+                            dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
+
+                    elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
+                        if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                            dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
+                        else: #grid partially covered
+                            dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
+
+                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                        A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
+                        A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
+                        Ar=4*(A1+A2)/width**2
+                        dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
+
+                asp+=dsp
+                #FACULA
+                if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
+                    continue 
+                
+                if dist>(width/2+spot_pos[l][3]): #grid not covered by faculae
+                    dfc=0.0
+                
+                else:
+                    if (width/m.sqrt(2))<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
+                        if dist<=(m.sqrt(spot_pos[l][3]**2-(width/2)**2)-width/2):  #grid completely covered
+                            dfc=1.0-dsp #subtract spot
+                        else:  #grid partially covered
+                            dfc=-(dist-spot_pos[l][3]-width/2)/(width+spot_pos[l][3]-m.sqrt(spot_pos[l][3]**2-(width/2)**2))-dsp
+
+                    elif (width/2)>spot_pos[l][3]: #if the grid can completely cover the spot, two cases:
+                        if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
+                            dfc=(np.pi/4)*(2*spot_pos[l][3]/width)**2-dsp               
+                        else: #grid partially covered
+                            dfc=(np.pi/4)*((2*spot_pos[l][3]/width)**2-(2*spot_pos[l][3]/width**2)*(dist-width/2+spot_pos[l][3]))-dsp
+
+                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                        A1=(width/2)*m.sqrt(spot_pos[l][3]**2-(width/2)**2)
+                        A2=(spot_pos[l][3]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][3]**2-(width/2)**2)/spot_pos[l][3]))
+                        Ar=4*(A1+A2)/width**2
+                        dfc=-Ar*(dist-width/2-spot_pos[l][3])/(width/2+spot_pos[l][3])-dsp
+
+                afc+=dfc
+
+
+            #PLANET
+            if simulate_planet:
+                if vis[-1]==1.0:
+                    dist=m.sqrt((planet_pos[0]*m.cos(planet_pos[1]) - vec_grid[iteration,1])**2 + ( planet_pos[0]*m.sin(planet_pos[1]) - vec_grid[iteration,2] )**2) #grid-planet distance
+                    
+                    width2=amu[i]*width
+                    if dist>width2/2+planet_pos[2]: apl=0.0
+                    elif dist<planet_pos[2]-width2/2: apl=1.0
+                    else: apl=-(dist-planet_pos[2]-width2/2)/width2
+
+
+            if afc>1.0:
+                afc=1.0
+
+            if asp>1.0:
+                asp=1.0
+                afc=0.0
+
+            if apl>1.0:
+                apl=1.0
+                asp=0.0
+                afc=0.0
+
+            if afc + asp > 1.0:
+                afc = 1.0 - asp
+
+            if apl>0.0:
+                asp=asp*(1-apl)
+                afc=afc*(1-apl)
+
+            aph=1-asp-afc-apl 
+          
+            #add the corresponding spectrum flux to the total spectrum
+            spec = spec - (1-aph)*spec_rings_ph[i,:]+asp*spec_rings_sp[i,:]+spec_rings_fc[i,:]*afc
+
+            Aph=Aph+aph*pare[i]
+            Asp=Asp+asp*pare[i]
+            Afc=Afc+afc*pare[i]
+            Apl=Apl+apl*pare[i]
+            typ.append([aph,asp,afc,apl])
+            
+
+    return spec ,typ, Aph, Asp, Afc, Apl
+
+
+
+

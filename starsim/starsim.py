@@ -8,6 +8,8 @@ import sys
 import os
 import corner
 from configparser import ConfigParser
+#import traceback
+from IPython.display import clear_output
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import math as m
@@ -115,6 +117,11 @@ class StarSim(object):
             self.planet_impact_paramurns = int(self.conf_file.get('optimization','N_burns'))
             self.N_cpus = int(self.conf_file.get('optimization','N_cpus'))
             self.N_iters_SA = int(self.conf_file.get('optimization','N_iters_SA'))
+            
+            #others
+            self.return_Imu = 0 # Returns I(mu) in order to get limb darkening law.
+            self.convolve_spec_with_filt = False # If True, it convolves self.results['spec'] with the selected filter in order to get the light curve, which is stored in self.results['spec_lc'].
+            self.prova = "lol"
 
 
             #FUNCTIONS USED TO ADD BISECTORS TO THE PHOTOSPHERE AT DIFF ANGLES
@@ -185,6 +192,9 @@ class StarSim(object):
                 #Finally, set the wavlength range around the available lines
                 self.wavelength_upper_limit=self.wvm.max()+1
                 self.wavelength_lower_limit=self.wvm.min()-1
+                print(self.wavelength_lower_limit)
+                print(self.wavelength_upper_limit)
+
 
             else:
                 sys.exit('ccf_template in configuration file is not valid. Valid modes are "model" or "mask".')
@@ -247,6 +257,7 @@ class StarSim(object):
         if inversion==False:
             self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit')) #Repeat this just in case CRX has modified the values
             self.wavelength_upper_limit = float(self.conf_file.get('general','wavelength_upper_limit'))
+            print(self.wavelength_lower_limit)
 
 
         if t is None:
@@ -274,12 +285,11 @@ class StarSim(object):
              
             
             if self.simulation_mode == 'grid':
-                brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
-                brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
+                brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
+                brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
                 brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp #if there are no faculae
                 if np.sum(self.facular_area_ratio)>0:
                     brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
-
                 t,FLUX,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
                 
 
@@ -294,23 +304,68 @@ class StarSim(object):
             self.results['ff_sp']=ff_sp
             self.results['ff_pl']=ff_pl
             self.results['ff_fc']=ff_fc
+
+        
+        if 'spec' in observables:#Oscar: based on the procedure for the 'lc' simulation, simulate the spectra as a function of time. At the moment using LR templates as the 'lc' simulation.
             
+            #Interpolate PHOENIX intensity models, only spot and photosphere
+            acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+            acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+
+             
+            
+            if self.simulation_mode == 'grid':
+                spec_rings_ph, spec_ph = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
+                spec_rings_sp, spec_sp = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flns_lc,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
+                spec_rings_fc, spec_fc = spec_rings_ph, spec_ph #if there are no faculae
+                if np.sum(self.facular_area_ratio)>0:
+                    spec_rings_fc, spec_fc = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'fc')
+
+                t,SPEC,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_spec(self,Ngrid_in_ring,pare,amu,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
+            
+            
+            elif self.simulation_mode == 'fast':
+                sys.exit("Simulation of 'spec' is unavailable for the 'fast' mode, please use the 'grid' mode.")
+            
+            
+            else:
+                sys.exit("Invalid simulation mode. Only 'grid' mode is available for simulation of 'spec'.")
+            
+            
+            
+            self.results['time']=t
+            self.results['spec']=SPEC
+            self.results['spec_wv']=wvp_lc
+            self.results['ff_ph']=ff_ph
+            self.results['ff_sp']=ff_sp
+            self.results['ff_pl']=ff_pl
+            self.results['ff_fc']=ff_fc
+            
+            
+            if self.convolve_spec_with_filt: # I added this parameter to ask if you want to convolve self.results['spec'] with the selected filter in order to get the light curve.
+                self.results['spec_lc']=spectra.convolve_spec_with_specified_filter(self)
+                
+                # #Read filter and interpolate it in order to convolve it with the spectra
+                # f_filt = spectra.interpolate_filter(self)
+                # spec_lc=np.zeros(len(t)) #brightness for each time step
+                # spec_conv_filt=np.zeros([len(t),len(wvp_lc)]) #spectra for each time step convolved with filter
+                
+                # for k in range(len(t)):
+                #     spec_conv_filt[k,:]=SPEC[k,:]*f_filt(wvp_lc) #convolve with filter.
+                #     spec_lc[k]=np.sum(spec_conv_filt[k,:])
+                
+                # self.results['spec_lc']=spec_lc
+
+
 
 
         if 'rv' in observables or 'bis' in observables or 'fwhm' in observables or 'contrast' in observables: #use HR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
-            
-            if w == 'eq_2':
-                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
-            elif w =='eq_1':
-                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation * np.sin(np.pi/2 - theta)**2) / 360)
-                
-            vsini = 1000*2*np.pi*(self.radius*696342)*np.cos(self.inclination)/(rotation_period_lat*86400)
-            rvel=vsini*np.sin(theta)*np.sin(phi) #radial velocities of each grid. Inclination already in vsini
+            rvel=self.vsini*np.sin(theta)*np.sin(phi)#*np.cos(self.inclination) #radial velocities of each grid
 
-            wv_rv, flnp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-            wv_rv, flns_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+            wv_rv, flnp_rv, flp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
+            wv_rv, flns_rv, fls_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
             if np.sum(self.facular_area_ratio)>0:
-                wv_rv, flnf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
+                wv_rv, flnf_rv, flf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
             spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
             
 
@@ -399,10 +454,10 @@ class StarSim(object):
             self.results['raw_xbis'] = ccf_params[4]
             self.results['raw_ybis'] = ccf_params[5]
             self.results['pos'] = vec_pos
+            self.results['rv0'] = RV0
 
-            self.results['ccf_ph'] = np.sum(ccf_ph_g,axis=0)
-            self.results['ccf_sp'] = np.sum(ccf_sp_g,axis=0)
-            self.results['ccf_fc'] = np.sum(ccf_fc_g,axis=0)
+
+            
 
 
 
@@ -432,10 +487,10 @@ class StarSim(object):
 
                 self.wavelength_lower_limit, self.wavelength_upper_limit = wvmins[i], wvmaxs[i]
 
-                wv_rv, flnp_rv = spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-                wv_rv, flns_rv = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+                wv_rv, flnp_rv, flp_rv = spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
+                wv_rv, flns_rv, fls_rv = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
                 if np.sum(self.facular_area_ratio)>0:
-                    wv_rv, flnf_rv = spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
+                    wv_rv, flnf_rv, flf_rv = spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
                 spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
 
 
@@ -534,6 +589,1957 @@ class StarSim(object):
 
         return 
 
+
+    
+    
+    def convolve_given_spec_with_specified_filters(self, t=None, spec=None, wv=None, filter_name_list=[None], parallelise=True, vectorise=True):
+        """
+        If nothing is given, it will convolve the computed self.results with the filter in the config file.
+
+        Parameters
+        ----------
+        t : TYPE, optional
+            DESCRIPTION. The default is self.results['t'].
+        spec : TYPE, optional
+            DESCRIPTION. The default is self.results['spec'].
+        wv : TYPE, optional
+            DESCRIPTION. The default is self.results['spec_wv'].
+        filter_name_list : TYPE, optional
+            DESCRIPTION. The default is [None].
+        parallelise : TYPE, optional
+            DESCRIPTION. The default is True.
+        vectorise : TYPE, optional
+            DESCRIPTION. The default is True.
+
+        Returns
+        -------
+        spec_lcs : TYPE
+            Spectral light curves.
+
+        """
+        # Check if 't' is provided as an argument or exists in self.results
+        if t is None and 't' not in self.results:
+            raise ValueError("'t' has not been provided. Please compute 'self.results['spec']' first (self.compute_forward(observables=['spec']) or provide the time ('t') as an argument.")
+        if spec is None and 'spec' not in self.results:
+            raise ValueError("The spectral time series ('spec') has not been computed. Please compute 'self.results['spec']' first (self.compute_forward(observables=['spec']) or provide 'spec' as an argument.")
+        # Check if 'wv' is provided as an argument or exists in self.results
+        if wv is None and 'wv' not in self.results:
+            raise ValueError("'wv' (wavelength) has not been provided. Please compute 'self.results['spec']' first (self.compute_forward(observables=['spec']) or provide the wavelength ('wv') as an argument.")
+        
+        if parallelise:
+            num_cores = multiprocessing.cpu_count()
+            
+            # Parallel execution for each filter_name
+            spec_lcs = Parallel(n_jobs=num_cores)(delayed(spectra.convolve_spec_with_specified_filter)(self, t=t, spec=spec, wv=wv, filter_name=filter_name, vectorise=vectorise) for filter_name in filter_name_list)
+            
+        else:
+            spec_lcs = []
+            for filter_name in filter_name_list:
+                spec_lcs.append(spectra.convolve_spec_with_specified_filter(self, t=t, spec=spec, wv=wv, filter_name=filter_name, vectorise=vectorise))
+        
+        return spec_lcs
+    
+
+    def compute_spectral_lcs(self, t=None, spec=None, wv=None, temp_filters_wv_range=None, temp_filters_wv_step=None, filter_name_list=None, delete_temp_directories=True, parallelise=True, vectorise=True, normalise_by_max=False, return_filter_paths_from_filters_folder=False):
+        """
+        
+
+        Parameters
+        ----------
+        temp_filters_wv_range : [min_wv,max_wv] array, optional
+            Wavelength range to cover with spectral lcs [min_wv,max_wv]. The default is None.
+        temp_filters_wv_step:
+            Wavelength step to generate spectral lc filters between wv-step_lc,wv+step_lc for wv in np.arange(min_wv,max_wv,step_wv)
+        filter_name_list : TYPE, optional
+            DESCRIPTION. The default is None.
+        delete_temp_directories : TYPE, optional
+            Whether to delete the temporary directories with generated filter files and configuration files. The default is True.
+
+        Returns
+        -------
+        None.
+
+        """
+        if temp_filters_wv_range is None and filter_name_list is None:
+            filter_name_list = [self.filter_name]
+        if temp_filters_wv_range is not None and filter_name_list is not None:
+            sys.exit('Please either provide a filter name list or a wavelength range to generate temporary filters (not both at the same time).')
+        if temp_filters_wv_range is not None and temp_filters_wv_step is None:
+            sys.exit('Please provide a wavelength step to generate temporary filters.')
+        if temp_filters_wv_range is None and temp_filters_wv_step is not None:
+            sys.exit('Please provide a wavelength range to generate temporary filters.')
+        
+        
+        
+        if temp_filters_wv_range is not None:
+            # Define the directory where filter files will be stored
+            filter_directory = str(self.path / 'models/filters/spec_flat_filters_for_each_wv/')
+            
+            # Define the directory where temporary configuration files will be stored
+            conf_directory = str(self.path / 'spec_conf_files_for_each_wv/')
+            
+            filter_paths_from_filters_folder = spectra.generate_temporary_filters_and_conf_files(self, temp_filters_wv_range, temp_filters_wv_step, filter_directory, conf_directory)
+            
+            spec_lcs = self.convolve_given_spec_with_specified_filters(t=t, spec=spec, wv=wv, filter_name_list=filter_paths_from_filters_folder, parallelise=parallelise, vectorise=vectorise)
+            
+            # Delete created directories
+            if delete_temp_directories:
+                try:
+                    shutil.rmtree(filter_directory)
+                except Exception as e:
+                    # Log the exception or handle it in a specific way
+                    print(f"Error deleting {filter_directory}: {e}")
+                try:
+                    shutil.rmtree(conf_directory)
+                except Exception as e:
+                    # Log the exception or handle it in a specific way
+                    print(f"Error deleting {conf_directory}: {e}")
+                
+                #shutil.rmtree(filter_directory, ignore_errors=True)
+                #shutil.rmtree(conf_directory, ignore_errors=True)
+        else:
+            spec_lcs = self.convolve_given_spec_with_specified_filters(t=t, spec=spec, wv=wv, filter_name_list=filter_name_list, parallelise=parallelise, vectorise=vectorise)
+        
+        if return_filter_paths_from_filters_folder:
+            if normalise_by_max:
+                return np.array(spec_lcs)/np.array(spec_lcs).max(axis=1).reshape(-1,1),filter_paths_from_filters_folder
+            else:
+                return spec_lcs,filter_paths_from_filters_folder
+        else:
+            if normalise_by_max:
+                return np.array(spec_lcs)/np.array(spec_lcs).max(axis=1).reshape(-1,1)
+            else:
+                return spec_lcs
+        
+        
+    
+    def compute_white_light_curve_from_spec(self, t=None, spec=None, wv=None, vectorise=True, normalize_by_max=False):
+        """
+        Computes the white light curve by summing across all wavelengths.
+    
+        Parameters
+        ----------
+        t : array-like, optional
+            Time array. Default is self.results['time'].
+        spec : 2D array-like, optional
+            Spectral data with time and wavelength dimensions. Default is self.results['spec'].
+        wv : array-like, optional
+            Wavelength array. Default is self.results['spec_wv'].
+        vectorise : bool, optional
+            If True, uses vectorized operations. Default is True.
+    
+        Returns
+        -------
+        white_light_curve : 1D array
+            White light curve as a time series.
+        """
+        if t is None:
+            t = self.results['time']
+        if spec is None:
+            spec = self.results['spec']
+        if wv is None:
+            wv = self.results['spec_wv']
+    
+        if vectorise:
+            # Sum across the wavelength dimension to get the white light curve
+            white_light_curve = np.sum(spec, axis=1)  # Collapse wavelength axis
+        else:
+            # Non-vectorized method
+            white_light_curve = np.zeros(len(t))
+            for k in range(len(t)):
+                white_light_curve[k] = np.sum(spec[k, :])
+                
+        # Normalize by maximum value if requested
+        if normalize_by_max:
+            max_value = np.max(white_light_curve)
+            if max_value > 0:  # Prevent division by zero
+                normalized_white_light_curve = white_light_curve / max_value
+            else:
+                normalized_white_light_curve = white_light_curve  # No normalization if max is zero
+        else:
+            normalized_white_light_curve = white_light_curve  # Return unnormalized
+    
+        return normalized_white_light_curve
+
+    
+#CAREFUL!!! THIS IS NOT EQUIVALENT TO COMPUTING THE WHITE LC FROM THE WHOLE SPECTRUM AS A FUNCTION OF TIME, SINCE SPECTRAL LCS CORRESPOND TO INDEPENDENTLY NORMALISED INTEGRATED SECTIONS OF THE SPECTRUM!!!
+    # def compute_white_light_curve_from_spectral_lcs(spectral_lcs, spectral_lcs_err=None):
+    #     """
+    #     Computes the normalized total/white light curve by summing the provided spectral light curves,
+    #     and optionally the associated errors.
+    
+    #     Parameters
+    #     ----------
+    #     spectral_lcs : list of 1D arrays
+    #         List containing spectral light curves, each representing a different wavelength window.
+    #     spectral_lcs_err : list of 1D arrays, optional
+    #         List containing errors corresponding to each spectral light curve.
+    
+    #     Returns
+    #     -------
+    #     normalized_total_light_curve : 1D array
+    #         The summed and normalized total/white light curve.
+    #     normalized_total_light_curve_err : 1D array, optional
+    #         The normalized errors for the total/white light curve, if errors were provided.
+    #     """
+    #     # Ensure there are spectral light curves to process
+    #     if not spectral_lcs:
+    #         raise ValueError("The input list 'spectral_lcs' is empty.")
+    
+    #     # Sum the spectral light curves
+    #     total_light_curve = np.sum(spectral_lcs, axis=0)
+        
+    #     # Normalize by the number of light curves
+    #     normalized_total_light_curve = total_light_curve / len(spectral_lcs)
+    
+    #     # If errors are provided, compute the normalized error
+    #     if spectral_lcs_err is not None:
+    #         if len(spectral_lcs_err) != len(spectral_lcs):
+    #             raise ValueError("The lengths of 'spectral_lcs' and 'spectral_lcs_err' must match.")
+            
+    #         total_light_curve_err = np.sqrt(np.sum(np.array(spectral_lcs_err)**2, axis=0))
+    #         normalized_total_light_curve_err = total_light_curve_err / len(spectral_lcs)
+    #         return normalized_total_light_curve, normalized_total_light_curve_err
+    
+    #     return normalized_total_light_curve, None
+
+
+    
+    
+    
+    # TODO: Parallelise when using 'multinest' sampler, since it is not parallelised on juliet, thus we could fit multiple wavelengths at the same time and save time.
+    def compute_transmission_spectrum(self, t, spectral_lcs, spectral_lcs_err=None, wv_range=None, wv_step=None, wvs=None, white_lc=None, white_lc_err=None, transit_time=None, transit_length=None, planet_inc=None, planet_inc_for_length=True, plot_model=False, plot_fit_metrics=True, use_juliet=False, juliet_fit_linear_trend=True, juliet_sampler='multinest', juliet_nthreads=None, juliet_dists=None, juliet_hyperps=None, juliet_out_folder=None, juliet_true_values=None, juliet_return_posteriors=False, juliet_create_tmp_symlink=False, juliet_symlink_dir=None, juliet_use_hyperps_per_wv=False, juliet_output_fits=True, juliet_ld_law='quadratic', use_batman_curve_fit=False, batman_fit_linear_trend=True, batman_plot_linear_fits=False, batman_plot_lc_fits=False, batman_ini_pars=None, batman_compute_white_light_curve=False, batman_spec=None, batman_spec_wv=None, batman_out_folder=None, batman_return_u_fitted_list=False, batman_u_fitted_list_to_use=None, batman_return_a_fitted_list=False, batman_a_fitted_list_to_use=None, batman_fit_params={'rp': True, 't0': False, 'a': False, 'inc': False, 'per': False, 'u': True}, batman_ld_law='quadratic', batman_fit_white_lc=True, batman_fit_period_for_white_lc=False, batman_b_to_fix=None, batman_model_based_3point=False, batman_use_kipping_ldc_parametrisation=True, batman_return_batman_fit_metrics_list=False, batman_output_data=False, use_three_point_approx=False, three_point_out_folder=None):
+        """
+        
+
+        Parameters
+        ----------
+        wv_range : TYPE
+            DESCRIPTION.
+        wv_step : TYPE
+            DESCRIPTION.
+        t : TYPE
+            DESCRIPTION.
+        spectral_lcs : TYPE
+            DESCRIPTION.
+        transit_time : TYPE, optional
+            DESCRIPTION. The default is None.
+        transit_length : TYPE, optional
+            DESCRIPTION. The default is None.
+        planet_inc : TYPE, optional
+            Planet inclination IN DEGREES!!!. The default is None.
+        planet_inc_for_length : TYPE, optional
+            Whether to use the planet inclination to compute transit length (correct expression). The default is True.
+        use_juliet : TYPE, optional
+            DESCRIPTION. The default is False.
+        juliet_dists : TYPE, optional
+            Example: dists = ['fixed','uniform','TruncatedNormal','fixed','uniform','uniform','fixed','fixed',\
+                              'fixed', 'fixed', 'fixed', 'fixed']. The default is None.
+        juliet_hyperps : TYPE, optional
+            Hyperparameters of the distributions (mean and standard-deviation for normal distributions, lower and upper limits for uniform and loguniform distributions, and fixed values for fixed "distributions", which assume the parameter is fixed). Example: hyperps = [planet_period_cloutier, [transit_time-0.1,transit_time+0.1], [0.116,0.02,0.08,0.15], 0.19, [0., 1.], [0., 1.], 0.0, 90.,a_over_Rstar, 1.0, 0., 0.1]. The default is None.
+        juliet_true_values : TYPE, optional
+            True values for the hyperparameters, needed to plot corner plots. The default is None.
+        use_batman_curve_fit : TYPE, optional
+            DESCRIPTION. The default is False.
+        use_three_point_approx : TYPE, optional
+            DESCRIPTION. The default is False.
+        
+        juliet_symlink_dir : 
+            If 'None' is given, it will try to use the first two folders of the path.
+        juliet_use_hyperps_per_wv : 
+            If True, instead of entering a list of values for the hyperparameters, you enter an array of lists of values for the hyperparameters, i.e. each list of values for the hyperparameters coresponds to each wavelength.
+        juliet_output_fits : 
+            Whether to output a folder from juliet containing fits parameters, posteriors, data, etc. or not. Does not affect whether you output plots or not.
+        juliet_ld_law : 
+            String with the name of the law to use — currently supported laws are the 'quadratic', the 'logarithmic' and the 'squareroot' laws (both with q1 and q2). Juliet also supports linear law (only q1) but it is not implemented here.
+        Returns
+        -------
+        results_depths : TYPE
+            DESCRIPTION.
+
+        """
+        def log_to_file(filename, message): #This function is to debug
+            with open(filename, 'a') as f:  # 'a' mode for appending
+                f.write(f"{message}\n")  # Write message and add newline
+        
+        if not use_juliet and not use_batman_curve_fit and not use_three_point_approx:
+            sys.exit('Please choose at least one option to compute transit depths amongst those available: use juliet (slowest), use batman&curve_fit (faster), or use the three-point approximation (fastest).')
+        if wvs is None:
+            if wv_range is None or wv_step is None:
+                sys.exit("Provide either wvs or both wv_range and wv_step.")
+            else:
+                min_wv,max_wv = wv_range
+                step_wv = wv_step
+                wvs = np.arange(min_wv,max_wv,step_wv)
+        elif wv_range is not None or wv_step is not None:
+            sys.exit("Provide either wvs or both wv_range and wv_step.")
+        
+        
+        if transit_time is None:
+            sys.exit('Please enter the transit central time or an estimate.')
+        
+        if planet_inc is None:
+            if(self.planet_esinw==0 and self.planet_ecosw==0):
+               ecc=0.
+               omega=90. * np.pi / 180.
+            else:
+               ecc=np.sqrt(self.planet_esinw**2+self.planet_ecosw**2)
+               omega=np.arctan2(self.planet_esinw,self.planet_ecosw)
+
+            cosi = (self.planet_impact_param/self.planet_semi_major_axis)*(1+self.planet_esinw)/(1-ecc**2) #cosine of planet inclination
+            inclination = np.arccos(cosi)*180./np.pi
+        else:
+            inclination = planet_inc
+        
+        if transit_length is None:
+            #Transit length expression from Joshua N. Winn (2014) (https://arxiv.org/abs/1001.2010)
+            
+            if planet_inc_for_length:
+                theoretical_transit_length = self.planet_period/np.pi * np.arcsin(1./self.planet_semi_major_axis * np.sqrt((1+self.planet_radius)**2 - self.planet_impact_param**2)/np.sin(np.pi/180*inclination))
+            else:
+                theoretical_transit_length = self.planet_period/np.pi * np.arcsin(1./self.planet_semi_major_axis * np.sqrt((1+self.planet_radius)**2 - self.planet_impact_param**2))
+            
+            
+            print("Theoretical transit length: {}".format(theoretical_transit_length))
+            transit_length = theoretical_transit_length
+        
+        t_ini_transit = transit_time-transit_length/2
+        t_end_transit = transit_time+transit_length/2
+    
+        idx_ini_transit = np.argmin(np.abs(t-t_ini_transit))
+        idx_end_transit = np.argmin(np.abs(t-t_end_transit))
+        
+        
+        results_depths = {} #Dictionary where each entry is an array of the computed transit depths using each specified method.
+        results_depths['juliet'],results_depths['batman_curve_fit'],results_depths['three_point_approx'] = None,None,None
+        if use_juliet:
+            start_transit_time = time()
+            start_wv = start_transit_time
+            fit_metrics = {}
+            linear_fit_metrics = {}
+            #ldc = {}
+            depth = {}
+            depth_otherdef = {}
+            errors_juliet_fitting = []
+            juliet_posteriors = []
+            
+            if juliet_out_folder is None:
+                sys.exit('Please enter an output folder for juliet. Beware multinest does not support folder paths longer than 69 characters.')
+            else:
+                def ensure_folder_exists(folder_path):
+                    # Check if the folder exists
+                    if not os.path.exists(folder_path):
+                        # If it does not exist, create it
+                        os.makedirs(folder_path)
+                        print(f"Folder created: {folder_path}")
+                    else:
+                        print(f"Folder already exists: {folder_path}")
+                ensure_folder_exists(juliet_out_folder)
+            
+            if juliet_create_tmp_symlink:
+                def create_symlink(original_path, symlink_dir=None):
+                    """
+                    Create a symlink in a specified directory.
+                    
+                    Parameters:
+                        original_path (str): The original directory path that may be too long.
+                        symlink_dir (str, optional): The directory where the symlink should be created. 
+                                                     If None, defaults to the first two folders of original_path + '/tmp'.
+                        max_length (int): The maximum allowed length for the path. Default is 69 characters.
+                
+                    Returns:
+                        str: The path to use, either the original or the new symlink.
+                
+                    Raises:
+                        Exception: If the symlink directory cannot be created or used.
+                    """
+                    if symlink_dir is None:
+                        parts = original_path.split(os.sep)
+                        if len(parts) >= 3:
+                            symlink_dir = os.path.join(os.sep, parts[1], parts[2], 'tmp')
+                        else:
+                            raise Exception(f"Cannot determine a valid symlink directory from path: {original_path}")
+            
+                    # Create the symlink directory if it doesn't exist
+                    if not os.path.exists(symlink_dir):
+                        try:
+                            os.makedirs(symlink_dir)
+                        except Exception as e:
+                            raise Exception(f"Failed to create symlink directory: {symlink_dir}") from e
+            
+                    # Generate a shorter symlink name based on the basename of the original path
+                    symlink_name = os.path.basename(original_path)
+                    symlink_path = os.path.join(symlink_dir, symlink_name)
+                    
+                    if len(symlink_path)>=42: #About the maximum to avoid the whole name being >=69.
+                        symlink_name = 's'
+                        symlink_path = os.path.join(symlink_dir, symlink_name)
+                    
+                    # Ensure the symlink doesn't already exist
+                    if not os.path.exists(symlink_path):
+                        try:
+                            os.symlink(original_path, symlink_path)
+                            print(f"Created symlink: {symlink_path} -> {original_path}")
+                        except Exception as e:
+                            raise Exception(f"Failed to create symlink: {symlink_path}") from e
+                    else:
+                        print(f"Symlink already exists: {symlink_path}")
+            
+                    return symlink_path
+                
+                juliet_original_out_folder = juliet_out_folder
+                juliet_out_folder = create_symlink(juliet_out_folder,juliet_symlink_dir)
+                
+
+
+            
+            
+            #Linear fit by hand and then juliet fit:
+            for i,wv in enumerate(wvs):
+                clear_output(wait=True) #Clear output for each iteration
+                print("\n\n\n------Wavelength {}.------\n Time since beginning: {} seconds / last wavelength: {} seconds\n\n".format(wv,time()-start_transit_time,time()-start_wv))
+                try:
+                    start_wv = time()
+                    f = spectral_lcs[i]
+                    # Create dictionaries:
+                    times, fluxes, fluxes_error= {},{},{}
+                    # Save data into those dictionaries:
+                    times['sim'], fluxes['sim'] = np.array(t),np.array(f)
+                    if spectral_lcs_err is None:
+                        fluxes_error['sim'] = np.array([0 for i in range(len(t))])
+                    else:
+                        fluxes_error['sim'] = np.array(spectral_lcs_err[i])
+        
+                    priors = {}
+                    if juliet_fit_linear_trend:
+                        ###Fit linear trend and renormalise data:
+                        # Get flux and time values outside of transit:
+                        fluxes_out_of_transit = np.concatenate((f[:idx_ini_transit], f[idx_end_transit:]))
+                        times_out_of_transit = np.concatenate((t[:idx_ini_transit], t[idx_end_transit:]))
+                        
+                        
+                        ini_slope = (f[-1] - f[0]) / (t[-1] - t[0])
+                        ini_y_intercept = f[0] - ini_slope * t[0]
+                        
+                        
+                        def linear_trend(t,*p):
+                            """
+                            Linear trend y=a*t+b. p[0] is the y-intercept and p[1] the slope
+                            """
+                            return p[0]+p[1]*t
+                        
+                        popt,pcov = curve_fit(linear_trend,
+                                                times_out_of_transit,
+                                                fluxes_out_of_transit,
+                                                p0=[ini_y_intercept,ini_slope],
+                                                bounds=((0.6,-0.002),(1.4,0.002)),
+                                                maxfev=10000)
+                        
+                        
+                        y_intercept,slope = popt
+                        
+                        # Compute the y values for the straight line using the computed slope and y-intercept
+                        ini_straight_line_lc = ini_slope * np.array(t) + ini_y_intercept
+                        straight_line_lc = slope * np.array(t) + y_intercept
+                        straight_line_lc_out_of_transit = slope * np.array(times_out_of_transit) + y_intercept
+                        
+                        
+                        
+                        #Get residuals:
+                        residuals_linear_fit = fluxes_out_of_transit - straight_line_lc_out_of_transit
+                        
+                        #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                        mse_linear_fit = np.sum(residuals_linear_fit**2)/np.shape(residuals_linear_fit)[0]
+                        linear_fit_metrics[wv] = [np.mean(residuals_linear_fit),
+                                                             np.std(residuals_linear_fit),
+                                                             mse_linear_fit]
+                        
+                        if plot_model:
+                            # Plot linear fit and residuals
+                            fig1 = plt.figure(1)
+                            frame1 = fig1.add_axes((.1,.3,.8,.6))
+                            plt.plot(t,ini_straight_line_lc,c='red',alpha=0.5,ls='dashed',label="Initial: {}".format([ini_y_intercept,ini_slope]))
+                            plt.plot(t,straight_line_lc,c='purple',alpha=0.5,label="Fitted: {}".format(popt))
+                            plt.scatter(t,f,alpha=0.5)
+                            plt.scatter(times_out_of_transit,fluxes_out_of_transit,alpha=0.5)
+                            
+                            plt.tight_layout()
+            
+            
+                            # Plot portion of the lightcurve, axes, etc.:
+                            plt.ylabel('Relative flux')
+                            plt.tick_params(labelbottom=False)  # Hide x-tick labels from the bottom
+                            plt.legend(fontsize=8)
+            
+                            #ADDING RESIDUALS:
+                            frame2=fig1.add_axes((.1,.1,.8,.2))
+                            plt.scatter(times_out_of_transit,residuals_linear_fit*1e6,color='pink',s=0.5,label=r'MSE: {:.2g}'.format(mse_linear_fit))
+                            plt.axhline(y = 0, linestyle = 'dotted',color='black',linewidth=0.5)
+                            plt.xlabel(r'Time (BJD - 2460000)')
+                            plt.ylabel(r'residuals (ppm)')
+                            #plt.gca().yaxis.set_label_coords(-0.06,0.5)
+                            plt.tick_params(axis='both',which='both',direction='in',right=True,top=True)
+            
+                            plt.legend(loc='best')
+                            plt.savefig(juliet_out_folder + '/{}_{}_linear_fit.png'.format(transit_time,wv))
+                            plt.show()
+            
+                        # Renormalise light curve dividing by linear trend:
+                        f = f / straight_line_lc
+                        fluxes['sim'] = fluxes['sim'] / straight_line_lc
+                    
+                    
+                    
+                    ###Define parameters for juliet:
+                    # Name of the parameters to be fit:
+                    params = ['P_p1', 't0_p1', 'p_p1', 'b_p1', 'q1_sim', 'q2_sim', 'ecc_p1', 'omega_p1', 'a_p1', 'mdilution_sim', 'mflux_sim', 'sigma_w_sim'] #sigma_w is in ppm
+                    
+                    if juliet_dists is None:
+                        sys.exit('Please enter the distribution for each parameter to use juliet.')
+                    else:
+                        dists = juliet_dists
+                    
+                    if juliet_hyperps is None:
+                        sys.exit('Please enter the hyperparameters of the distribution for each parameter to use juliet.')
+                    else:
+                        if juliet_use_hyperps_per_wv:
+                            hyperps = juliet_hyperps[i]
+                        else:
+                            hyperps = juliet_hyperps
+                    
+                    # Populate the priors dictionary:
+                    for param, dist, hyperp in zip(params, dists, hyperps):
+                        priors[param] = {}
+                        priors[param]['distribution'], priors[param]['hyperparameters'] = dist, hyperp
+                    folder = juliet_out_folder+'/{:.2f}_{}_fit'.format(transit_time,wv)
+                    if juliet_sampler=='multinest' and len(folder)>=69:
+                        sys.exit('Warning: The multinest sampler does not support out_folder paths longer than 69 characters. Please try again with a shorter name or use the argument juliet_create_tmp_symlink=True. Current name: {}'.format(folder))
+                    # Load dataset into juliet, save results to a folder:
+                    dataset = juliet.load(priors=priors, t_lc = times, y_lc = fluxes, \
+                                          yerr_lc = fluxes_error, ld_laws=juliet_ld_law, out_folder = folder)
+        
+                    # Fit and absorb results into a juliet.fit object:
+                    results = dataset.fit(n_live_points = 300, sampler = juliet_sampler, nthreads = multiprocessing.cpu_count() if juliet_nthreads is None else juliet_nthreads)
+        
+                    
+                    
+                    #Get residuals:
+                    residuals = dataset.data_lc['sim'] - results.lc.evaluate('sim')
+                    
+                    #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                    mse = np.sum(residuals**2)/np.shape(residuals)[0]
+                    fit_metrics[wv] = [np.mean(residuals),
+                                       np.std(residuals),
+                                       mse]
+                    
+                    
+                    
+                    #Save fit parameters, including transit depth and LDC:
+                    # Store posterior samples for q1, q2 and p_p1:
+                    #q1, q2, p_p1 = results.posteriors['posterior_samples']['q1_sim'],\
+                    #               results.posteriors['posterior_samples']['q2_sim'],\
+                    #               results.posteriors['posterior_samples']['p_p1']
+                    # Store posterior samples for p_p1:
+                    p_p1 = results.posteriors['posterior_samples']['p_p1']
+                    if juliet_return_posteriors:
+                        juliet_posteriors.append(results.posteriors['posterior_samples'])
+                    # Get median from quantiles:
+                    #q1 = juliet.utils.get_quantiles(q1)[0]
+                    #q2 = juliet.utils.get_quantiles(q2)[0]
+                    p_p1 = juliet.utils.get_quantiles(p_p1)[0] #R_p/R_s
+                    # Save transit depth and LDC:
+                    #ldc[wv] = [q1,q2]
+                    depth[wv] = p_p1**2 #(R_p/R_s)^2
+                    
+                    depth_otherdef[wv] = (np.mean([f[idx_ini_transit],f[idx_end_transit]])-np.min(f))/np.mean([f[idx_ini_transit],f[idx_end_transit]])
+                    
+                    
+                    
+                    
+                    
+                    if plot_model:
+                        # Plot the data:
+                        fig1 = plt.figure(1)
+                        frame1 = fig1.add_axes((.1,.3,.8,.6))
+                        plt.errorbar(dataset.times_lc['sim'], dataset.data_lc['sim'], \
+                                     yerr = dataset.errors_lc['sim'], fmt = '.', alpha = 0.1, label="Data")
+                        
+                        # Plot the model:
+                        plt.plot(dataset.times_lc['sim'], results.lc.evaluate('sim'),label="Juliet fit")
+                        plt.tight_layout()
+            
+            
+                        # Plot axes, etc.:
+                        #plt.xlabel('Time (BJD - 2460000)')
+                        plt.ylabel('Relative flux')
+                        plt.tick_params(labelbottom=False)  # Hide x-tick labels from the bottom
+                        plt.legend()
+                        
+                        #ADDING RESIDUALS:
+                        frame2=fig1.add_axes((.1,.1,.8,.2))
+                        plt.scatter(dataset.times_lc['sim'],residuals*1e6,color='pink',s=0.5,label=r'MSE: {:.2g}'.format(mse))
+                        plt.axhline(y = 0, linestyle = 'dotted',color='black',linewidth=0.5)
+                        plt.xlabel(r'Time')
+                        plt.ylabel(r'residuals (ppm)')
+                        #plt.gca().yaxis.set_label_coords(-0.06,0.5)
+                        plt.tick_params(axis='both',which='both',direction='in',right=True,top=True)
+                        
+                        plt.legend(loc='best')
+                        plt.savefig(juliet_out_folder+'/{}_{}_fit.png'.format(transit_time,wv))
+                        plt.show()
+                        
+                        
+                        
+                        
+                        
+                        #Plot corner plots
+                        if juliet_true_values is not None:
+                            # Collect posterior samples for parameters that are not fixed
+                            samples = []
+                            labels = []
+                            true_values = juliet_true_values
+                            truths = []
+                            for i in range(len(params)):
+                                param_name = params[i]
+                                try:
+                                    param_samples = results.posteriors['posterior_samples'][param_name]
+                                    samples.append(param_samples)
+                                    labels.append(param_name)
+                                    truths.append(true_values[i])
+                                except KeyError:
+                                    print(f"No posterior samples for '{param_name}', skipping...")
+                
+                            # Plot corner plot only if there are samples for at least two parameters
+                            if len(samples) >= 2:
+                                print('truths:{}'.format(truths))
+                                print('len of truths: {}'.format(len(truths)))
+                                print('len of samples: {}'.format(len(samples)))
+                                fig = corner.corner(np.array(samples).T, labels=labels, truths=truths, #truth_color='red',
+                                                    quantiles=[0.16, 0.5, 0.84],show_titles=True,
+                                                    title_fmt='.6f',
+                                                    title_kwargs={"fontsize": 12},
+                                                    label_kwargs={"fontsize": 12})
+                                
+                                ndim = len(labels)
+                                axes = np.array(fig.axes).reshape((ndim, ndim))
+                                
+                                for xi in range(ndim):
+                                    ax = axes[-1, xi]  # Target the axes in the lowest row
+                                    ax.xaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+                                    
+                                    ax.tick_params(axis='x', which='major', labelsize=9)  # Adjust the font size of x-tick labels as needed
+                                    
+                                    ax.xaxis.set_label_coords(0.5, -0.5)
+                                for yi in range(ndim):
+                                    ax = axes[yi, 0]  # Target the axes in the leftmost column
+                                    ax.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+                                    
+                                    ax.tick_params(axis='y', which='major', labelsize=9)  # Adjust the font size of x-tick labels as needed
+                                    
+                                    ax.yaxis.set_label_coords(-0.5, 0.5)
+                                
+                                #plt.subplots_adjust(left=0.1, bottom=0.3, right=0.9, top=0.9, wspace=0.3, hspace=0.3)
+                                #plt.tick_params(axis='x', which='major', pad=10)  # Increase padding between tick labels and axis
+                                plt.savefig(juliet_out_folder+'/{}_{}_cornerplot.png'.format(transit_time,wv))
+                                plt.show()
+                            else:
+                                print("Insufficient parameters with posterior samples to plot corner plot.")
+                    
+                    if not juliet_output_fits: #If we don't want the output files from juliet, delete them:
+                        if os.path.exists(folder):
+                            shutil.rmtree(folder)
+                        
+                        
+                except Exception as e:
+                    # Handle the exception
+                    error_info = {
+                        "transit_time": transit_time,
+                        "wv": wv,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)
+                    }
+                    errors_juliet_fitting.append(error_info)
+                    print(f"Error on transit_time {transit_time} and wv {wv}: {type(e).__name__} - {e}")
+            
+            
+            try:
+                if plot_fit_metrics:
+                    #Plot all LINEAR fit metrics for this transit_time:
+                    #  Mean of residuals
+                    plt.plot(wvs,[linear_fit_metrics[wv][0] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("mean(residuals)")
+                    plt.savefig(juliet_out_folder + '/linear_fit_transit_time_{}_mean_residuals.png'.format(transit_time))
+                    plt.show()
+                    #  Std of residuals
+                    plt.plot(wvs,[linear_fit_metrics[wv][1] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("std(residuals)")
+                    plt.savefig(juliet_out_folder + '/linear_fit_transit_time_{}_std_residuals.png'.format(transit_time))
+                    plt.show()
+                    #  MSE
+                    plt.plot(wvs,[linear_fit_metrics[wv][2] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("MSE")
+                    plt.savefig(juliet_out_folder + '/linear_fit_transit_time_{}_MSE.png'.format(transit_time))
+                    plt.show()
+                    
+                    #Plot all fit metrics for this transit_time:
+                    #  Mean of residuals
+                    plt.plot(wvs,[fit_metrics[wv][0] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("mean(residuals)")
+                    plt.savefig(juliet_out_folder + '/fit_transit_time_{}_mean_residuals.png'.format(transit_time))
+                    plt.show()
+                    #  Std of residuals
+                    plt.plot(wvs,[fit_metrics[wv][1] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("std(residuals)")
+                    plt.savefig(juliet_out_folder + '/fit_transit_time_{}_std_residuals.png'.format(transit_time))
+                    plt.show()
+                    #  MSE
+                    plt.plot(wvs,[fit_metrics[wv][2] for wv in wvs])
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("MSE")
+                    plt.savefig(juliet_out_folder + '/fit_transit_time_{}_MSE.png'.format(transit_time))
+                    plt.show()
+                    
+                if plot_model:
+                    #Plot transit depth vs wavelength for this transit_time:
+                    plt.plot(wvs,[1000000*depth[wv] for wv in wvs],label="Data")
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("Transit depth (ppm)")
+                    plt.legend()
+                    plt.savefig(juliet_out_folder + '/transit_depth_vs_lambda_transit_time_{}_ppm.png'.format(transit_time))
+                    plt.show()
+                    
+                    #Plot transit depth otherdef vs wavelength for this transit_time:
+                    plt.plot(wvs,[1000000*depth_otherdef[wv] for wv in wvs],label="Data")
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("Transit depth other def (ppm)")
+                    plt.legend()
+                    plt.savefig(juliet_out_folder + '/transit_depth_otherdef_vs_lambda_transit_time_{}_ppm.png'.format(transit_time))
+                    plt.show()
+                
+                
+                
+                #### SAVING DATA:
+                output_base_filename = juliet_out_folder + "/transit_depth_vs_wavelength_data_transit_time_{}/".format(transit_time)
+                os.makedirs(os.path.dirname(output_base_filename), exist_ok=True) #Check if directory exists, if not then create it
+                with open(output_base_filename+"transit_depth_vs_lambda.txt","w") as f:
+                    results =  np.array([wvs,[depth[wv] for wv in wvs]])
+                    np.savetxt(f, results, fmt='%.10f', delimiter="\t")
+                df = pd.DataFrame(list(fit_metrics.items()), columns=['Key', 'Value'])
+                df.to_csv(output_base_filename+"fit_metrics.csv", index=False, sep='\t')
+                df = pd.DataFrame(list(linear_fit_metrics.items()), columns=['Key', 'Value'])
+                df.to_csv(output_base_filename+"linear_fit_metrics.csv", index=False, sep='\t')
+        
+        
+                
+            except Exception as e:
+                # Handle the exception
+                error_info = {
+                    "transit_time": transit_time,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)
+                }
+                print(f"Error on transit_time {transit_time}: {type(e).__name__} - {e}")
+                #traceback.print_exc()
+            
+            
+            # After the loop, you can inspect the list of errors
+            print("\nList of Errors Juliet Fitting:")
+            for error in errors_juliet_fitting:
+                print(f"Iteration {error['transit_time']},{error['wv']}: {error['error_type']} - {error['error_message']}")
+
+            
+
+
+            results_depths['juliet'] = (np.array([depth[wv] for wv in wvs]))
+            
+            if juliet_create_tmp_symlink:
+                if juliet_original_out_folder != juliet_out_folder:
+                    def remove_symlink(symlink_path):
+                        """
+                        Remove the symlink without affecting the original directory.
+                    
+                        Parameters:
+                            symlink_path (str): The path of the symlink to remove.
+                        """
+                        if os.path.islink(symlink_path):
+                            os.unlink(symlink_path)
+                            print(f"Removed symlink: {symlink_path}")
+                        else:
+                            print(f"No symlink found at: {symlink_path}")
+                    
+                    remove_symlink(juliet_out_folder)
+                    juliet_out_folder = juliet_original_out_folder
+            
+        
+        if use_batman_curve_fit:
+            fit_metrics = {}
+            linear_fit_metrics = {}
+            if batman_output_data or batman_plot_lc_fits or batman_plot_linear_fits:
+                if batman_out_folder is None:
+                    sys.exit('Please enter an output folder for batman.')
+                else:
+                    def ensure_folder_exists(folder_path):
+                        # Check if the folder exists
+                        if not os.path.exists(folder_path):
+                            # If it does not exist, create it
+                            os.makedirs(folder_path)
+                            print(f"Folder created: {folder_path}")
+                        else:
+                            print(f"Folder already exists: {folder_path}")
+                    ensure_folder_exists(batman_out_folder)
+            
+            
+            if batman_fit_white_lc:
+                if white_lc is None:
+                    if not batman_compute_white_light_curve:
+                        sys.exit("Error: The white light curve (integrated spectrum) is needed to use the batman method if batman_fit_white_lc=True. Either provide it or set batman_compute_white_light_curve=True and provide batman_spec and batman_spec_wv.")
+                    else:
+                        if batman_spec is None:
+                            sys.exit("Error: batman_spec is None. The white light curve (integrated spectrum) is needed to use the batman method if batman_fit_white_lc=True. Either provide it or set batman_compute_white_light_curve=True and provide batman_spec and batman_spec_wv.")
+                        elif batman_spec_wv is None:
+                            sys.exit("Error: batman_spec_wv is None. The white light curve (integrated spectrum) is needed to use the batman method if batman_fit_white_lc. Either provide it or set batman_compute_white_light_curve=True and provide batman_spec and batman_spec_wv.")
+                        else:
+                            white_lc,white_lc_err = self.compute_white_light_curve_from_spec(t=t, spec=batman_spec, wv=batman_spec_wv, vectorise=True, normalize_by_max=True)
+                #if white_lc_err is None:
+                #    white_lc_err = np.array([0 for i in range(len(t))])
+                
+                ######################################### FIT WHITE LIGHT CURVE #########################################
+                
+                #Fit linear trend for the white light curve:
+                if batman_fit_linear_trend:
+                    ###Fit linear trend and renormalise data:
+                    # Get flux and time values outside of transit:
+                    f = white_lc
+                    fluxes_out_of_transit = np.concatenate((f[:idx_ini_transit], f[idx_end_transit:]))
+                    times_out_of_transit = np.concatenate((t[:idx_ini_transit], t[idx_end_transit:]))
+                    
+                    
+                    ini_slope = (f[-1] - f[0]) / (t[-1] - t[0])
+                    ini_y_intercept = f[0] - ini_slope * t[0]
+                    
+                    
+                    def linear_trend(t,*p):
+                        """
+                        Linear trend y=a*t+b. p[0] is the y-intercept and p[1] the slope
+                        """
+                        return p[0]+p[1]*t
+                    
+                    popt,pcov = curve_fit(linear_trend,
+                                            times_out_of_transit,
+                                            fluxes_out_of_transit,
+                                            p0=[ini_y_intercept,ini_slope],
+                                            bounds=((ini_y_intercept-2,ini_slope-0.100),(ini_y_intercept+2,ini_slope+0.100)),#((0.4,-0.020),(1.6,0.020)),#bounds=((0.6,-0.002),(1.4,0.002)),
+                                            maxfev=10000)
+                    
+                    
+                    y_intercept,slope = popt
+                    
+                    # Compute the y values for the straight line using the computed slope and y-intercept
+                    ini_straight_line_lc = ini_slope * np.array(t) + ini_y_intercept
+                    straight_line_lc = slope * np.array(t) + y_intercept
+                    straight_line_lc_out_of_transit = slope * np.array(times_out_of_transit) + y_intercept
+                    
+                    
+                    
+                    #Get residuals:
+                    residuals_linear_fit = fluxes_out_of_transit - straight_line_lc_out_of_transit
+                    
+                    #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                    mse_linear_fit = np.sum(residuals_linear_fit**2)/np.shape(residuals_linear_fit)[0]
+                    linear_fit_metrics_white_lc = [np.mean(residuals_linear_fit),
+                                                         np.std(residuals_linear_fit),
+                                                         mse_linear_fit]
+                    
+                    if batman_plot_linear_fits:
+                        # Plot linear fit and residuals
+                        fig1 = plt.figure(1)
+                        frame1 = fig1.add_axes((.1,.3,.8,.6))
+                        plt.plot(t,ini_straight_line_lc,c='red',alpha=0.5,ls='dashed',label="Initial: {}".format([ini_y_intercept,ini_slope]))
+                        plt.plot(t,straight_line_lc,c='purple',alpha=0.5,label="Fitted: {}".format(popt))
+                        plt.scatter(t,f,alpha=0.5)
+                        plt.scatter(times_out_of_transit,fluxes_out_of_transit,alpha=0.5)
+                        
+                        plt.tight_layout()
+        
+        
+                        # Plot portion of the lightcurve, axes, etc.:
+                        plt.ylabel('Relative flux')
+                        plt.tick_params(labelbottom=False)  # Hide x-tick labels from the bottom
+                        plt.legend(fontsize=8)
+        
+                        #ADDING RESIDUALS:
+                        frame2=fig1.add_axes((.1,.1,.8,.2))
+                        plt.scatter(times_out_of_transit,residuals_linear_fit*1e6,color='pink',s=0.5,label=r'MSE: {:.2g}'.format(mse_linear_fit))
+                        plt.axhline(y = 0, linestyle = 'dotted',color='black',linewidth=0.5)
+                        plt.xlabel(r'Time (BJD - 2460000)')
+                        plt.ylabel(r'residuals (ppm)')
+                        #plt.gca().yaxis.set_label_coords(-0.06,0.5)
+                        plt.tick_params(axis='both',which='both',direction='in',right=True,top=True)
+        
+                        plt.legend(loc='best')
+                        plt.savefig(batman_out_folder + '/{}_white_lc_linear_fit.png'.format(transit_time))
+                        plt.show()
+        
+                    # Renormalise light curve dividing by linear trend:
+                    f = f / straight_line_lc
+                    white_lc = white_lc / straight_line_lc
+                
+                
+                
+                
+                
+                
+                # initialize batman model with known system parameters
+                
+                #global params
+                params = batman.TransitParams()       # object to store transit parameters
+                if batman_ini_pars is None: #if no initial parameters are provided, initialise them according to those in the conf file.
+                    # limb-darkening coefficients
+                    u1, u2 = 0.5, 0.5 #0.088, 0.15
+                    u3, u4 = 0.5, 0.5
+                    
+                    if(self.planet_esinw==0 and self.planet_ecosw==0):
+                       ecc=0
+                       omega=90  * np.pi / 180.
+                    else:
+                       ecc=np.sqrt(self.planet_esinw**2+self.planet_ecosw**2)
+                       omega=np.arctan2(self.planet_esinw,self.planet_ecosw)
+                    
+                    params.inc = inclination #orbital inclination (in degrees)
+                    params.ecc = ecc                        # eccentricity
+                    params.w = omega*180/np.pi              # longitude of periastron (in degrees)
+                    params.a = self.planet_semi_major_axis                     # semi-major axis
+                    params.per = self.planet_period                 # orbital period
+                    params.rp =  self.planet_radius                  # planetary radius 
+                    params.t0 = transit_time                      # time of mid-transit
+                    params.limb_dark = batman_ld_law #'quadratic'        # limb-darkening law
+                    if batman_ld_law == 'linear':
+                        params.u = [u1] # limb-darkening coefficients
+                        u_bounds = ([0], [1])
+                    elif batman_ld_law == 'quadratic':
+                        params.u = [u1, u2]                   # limb-darkening coefficients
+                        u_bounds = ([0, 0], [1, 1])
+                    elif batman_ld_law == 'nonlinear':
+                        params.u = [u1, u2, u3, u4]                   # limb-darkening coefficients
+                        u_bounds = ([0, 0, 0, 0], [1, 1, 1, 1])
+                    elif batman_ld_law == 'three-parameter': #This is equivalent to the 'nonlinear' law from batman but with c1=0, it's the Claret four parameter law with c1=0. This is named "Kipping–Sing limb darkening law" on this paper and is recommended especially for high impact parameters: https://arxiv.org/pdf/2410.1861
+                        params.limb_dark = 'nonlinear'
+                        params.u = [0, u2, u3, u4]
+                        u_bounds = ([0, 0, 0], [1, 1, 1])
+                    else:
+                        raise ValueError(f"Unsupported limb-darkening law: {batman_ld_law}")
+                else: #if initial parameters are provided, use them
+                    params.inc,params.ecc,params.w,params.a,params.per,params.rp,params.t0,params.limb_dark,params.u = batman_ini_pars
+                    if batman_ld_law == 'linear':
+                        u_bounds = ([0], [1])
+                    elif batman_ld_law == 'quadratic':
+                        u_bounds = ([0, 0], [1, 1])
+                    elif batman_ld_law == 'nonlinear':
+                        u_bounds = ([0, 0, 0, 0], [1, 1, 1, 1])
+                    elif batman_ld_law == 'three-parameter': #This is equivalent to the 'nonlinear' law from batman but with c1=0, it's the Claret four parameter law with c1=0. This is named "Kipping–Sing limb darkening law" on this paper and is recommended especially for high impact parameters: https://arxiv.org/pdf/2410.1861
+                        u_bounds = ([0, 0, 0], [1, 1, 1])
+                    else:
+                        raise ValueError(f"Unsupported limb-darkening law: {batman_ld_law}")
+                    
+                if batman_fit_period_for_white_lc:
+                    lower_bounds = [0, t[0], 0, 0, 0]
+                    upper_bounds = [1, t[-1], np.inf, 90, np.inf]
+                else:
+                    lower_bounds = [0, t[0], 0, 0]
+                    upper_bounds = [1, t[-1], np.inf, 90]
+                
+                lower_bounds += list(u_bounds[0])
+                upper_bounds += list(u_bounds[1])
+                
+                model = None
+                if not batman_model_based_3point:
+                    # create batman model
+                    model = batman.TransitModel(params, t)
+    
+                if batman_fit_period_for_white_lc:
+                    def lc_model(exp_times, rp, t0, a, inc, per, *u):
+                    
+                        """
+                        
+                        Function to define the light curve model
+                    
+                        """
+                        
+                        params.rp = rp
+                        params.t0 = t0
+                        params.a = a
+                        params.inc = inc
+                        params.per = per
+                        if batman_ld_law == 'three-parameter':
+                            params.u = [0, u[0], u[1], u[2]]  # Fix u1 = 0
+                        else:
+                            params.u = u
+                        
+                        if batman_use_kipping_ldc_parametrisation:
+                            if batman_ld_law == 'three-parameter':
+                                third	= 1./3. #0.333333333333333
+                                twopi	= 2*np.pi #6.283185307179586
+                                P1	= 4.500841772313891
+                                P2	= 17.14213562373095
+                                Q1	= 7.996825477806030
+                                Q2	= 8.566161603278331
+                                
+                                alpha_t = u[0]
+                                alpha_h = u[1]
+                                alpha_r = u[2]
+                                c_2 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( -6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                c_3 = (alpha_h**third)*( -Q1 - Q2*np.sqrt(alpha_r)*np.sin(twopi*alpha_t) )
+                                c_4 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( 6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                params.u = [0, c_2, c_3, c_4]
+                            elif batman_ld_law == 'quadratic':
+                                q1 = u[0]
+                                q2 = u[1]
+                                params.u = [2*np.sqrt(q1)*q2,np.sqrt(q1)*(1-2*q2)]
+                            else:
+                                raise ValueError("Kipping LDC parametrisation is not yet implemented for LD laws different than quadratic or three-parameter. batman_use_kipping_ldc_parametrisation=True yet batman_ld_law is neither quadratic nor three-parameter.")
+                        
+                        if batman_model_based_3point:
+                            # create batman model
+                            model1 = batman.TransitModel(params, exp_times)
+                            light_curve = model1.light_curve(params)
+                        else:
+                            if model is not None:
+                                light_curve = model.light_curve(params)  # Proceed only if model is defined
+                            else:
+                                # Handle the case where model wasn't initialized
+                                raise ValueError("Model was not initialized. Check your batman_model_based_3point condition.")
+                        
+                        return light_curve
+                else:
+                    def lc_model(exp_times, rp, t0, a, inc, *u):
+                    
+                        """
+                        
+                        Function to define the light curve model
+                    
+                        """
+                        
+                        params.rp = rp
+                        params.t0 = t0
+                        params.a = a
+                        params.inc = inc
+                        if batman_ld_law == 'three-parameter':
+                            params.u = [0, u[0], u[1], u[2]]  # Fix u1 = 0
+                        else:
+                            params.u = u
+                        
+                        if batman_use_kipping_ldc_parametrisation:
+                            if batman_ld_law == 'three-parameter':
+                                third	= 1./3. #0.333333333333333
+                                twopi	= 2*np.pi #6.283185307179586
+                                P1	= 4.500841772313891
+                                P2	= 17.14213562373095
+                                Q1	= 7.996825477806030
+                                Q2	= 8.566161603278331
+                                
+                                alpha_t = u[0]
+                                alpha_h = u[1]
+                                alpha_r = u[2]
+                                c_2 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( -6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                c_3 = (alpha_h**third)*( -Q1 - Q2*np.sqrt(alpha_r)*np.sin(twopi*alpha_t) )
+                                c_4 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( 6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                params.u = [0, c_2, c_3, c_4]
+                            elif batman_ld_law == 'quadratic':
+                                q1 = u[0]
+                                q2 = u[1]
+                                params.u = [2*np.sqrt(q1)*q2,np.sqrt(q1)*(1-2*q2)]
+                            else:
+                                raise ValueError("Kipping LDC parametrisation is not yet implemented for LD laws different than quadratic or three-parameter. batman_use_kipping_ldc_parametrisation=True yet batman_ld_law is neither quadratic nor three-parameter.")
+                        
+                        if batman_model_based_3point:
+                            # create batman model
+                            model1 = batman.TransitModel(params, exp_times)
+                            light_curve = model1.light_curve(params)
+                        else:
+                            if model is not None:
+                                light_curve = model.light_curve(params)  # Proceed only if model is defined
+                            else:
+                                # Handle the case where model wasn't initialized
+                                raise ValueError("Model was not initialized. Check your batman_model_based_3point condition.")
+                    
+                        return light_curve
+                
+                
+                if batman_fit_period_for_white_lc:
+                    p0 = [params.rp, params.t0, params.a, params.inc, params.per]
+                else:
+                    p0 = [params.rp, params.t0, params.a, params.inc]
+                
+                if batman_ld_law =='three-parameter':
+                    p0 += params.u[1:]
+                else:
+                    p0 += params.u
+                
+                if white_lc_err is None:
+                    # perform light curve fitting
+                    popt, pcov = optimize.curve_fit(lc_model, 
+                                        t, 
+                                        white_lc,
+                                        p0 = p0,#, params.u[0], params.u[1]], 
+                                        bounds=(lower_bounds, upper_bounds),
+                                        maxfev = 4000,
+                                        ftol = 1e-10,
+                                        xtol = 1e-10,
+                                        method = 'trf',#potser canviar a trf i posar bounds per rp,u.
+                                        absolute_sigma=True)
+                else:
+                    # perform light curve fitting
+                    popt, pcov = optimize.curve_fit(lc_model, 
+                                        t, 
+                                        white_lc, 
+                                        sigma = white_lc_err, 
+                                        p0 = p0, #, params.u[0], params.u[1]], 
+                                        bounds=(lower_bounds, upper_bounds),
+                                        maxfev = 4000,
+                                        ftol = 1e-10,
+                                        xtol = 1e-10,
+                                        method = 'trf',#potser canviar a trf i posar bounds per rp,u.
+                                        absolute_sigma=True)
+            
+                # estimate parameter errors from covariance matrix
+                perr = np.sqrt(np.diag(pcov))
+                
+                # get fitted parameters
+                transit_depth = popt[0]**2
+                rp_fitted = popt[0]
+                t0_fitted = popt[1]
+                a_fitted = popt[2]
+                inc_fitted = popt[3]
+                if batman_fit_period_for_white_lc:
+                    per_fitted = popt[4]
+                    u_fitted = [0]+list(popt[5:]) if batman_ld_law == 'three-parameter' else popt[5:]
+                else:
+                    u_fitted = [0]+list(popt[4:]) if batman_ld_law == 'three-parameter' else popt[4:]
+                
+                #Get residuals: 
+                residuals = white_lc - lc_model(t, *popt)
+                
+                #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                mse = np.sum(residuals**2)/np.shape(residuals)[0]
+                fit_metrics_white_lc = [np.mean(residuals),
+                                   np.std(residuals),
+                                   mse]
+                
+                if plot_model:
+                    # print the fitted parameters
+                    print('rp: {:.5f}'.format(popt[0]))
+                    print('Transit depth: {:.5f} %'.format(transit_depth*100))
+                    print('Time of mid-transit: {:.5f} days'.format(t0_fitted))
+                    print('Semi-major axis: {:.5f}'.format(a_fitted))
+                    print('Inclination: {:.5f} deg'.format(inc_fitted))
+                    #print('LD coeffs: u1={:.5f},u2={:.5f} deg'.format(u_fitted[0],u_fitted[1]))
+                    if batman_fit_period_for_white_lc:
+                        print('Planet period: {:.5f} days'.format(per_fitted))
+                    print('LD coeffs: ' + ', '.join([f'u{i+1}={u_fitted[i]:.5f}' for i in range(len(u_fitted))]))
+                    
+                    if batman_fit_period_for_white_lc:
+                        legend_text = (
+                            f"$r_p$: {popt[0]:.5f}\n"
+                            f"Transit depth: {transit_depth*1e6:.1f} ppm\n"
+                            f"Mid-transit time: {t0_fitted:.5f} days\n"
+                            f"Semi-major axis: {a_fitted:.5f}\n"
+                            f"Inclination: {inc_fitted:.5f}°\n"
+                            f"Planet period: {per_fitted:.5f} days\n"
+                            + '\n'.join([f"LD coeffs: $u_{i+1}$={u_fitted[i]:.5f}" for i in range(len(u_fitted))])
+                        )
+                    else:
+                        legend_text = (
+                            f"$r_p$: {popt[0]:.5f}\n"
+                            f"Transit depth: {transit_depth*1e6:.1f} ppm\n"
+                            f"Mid-transit time: {t0_fitted:.5f} days\n"
+                            f"Semi-major axis: {a_fitted:.5f}\n"
+                            f"Inclination: {inc_fitted:.5f}°\n"
+                            + '\n'.join([f"LD coeffs: $u_{i+1}$={u_fitted[i]:.5f}" for i in range(len(u_fitted))])
+                        )
+                        #f"LD coeffs: $u_1$={u_fitted[0]:.5f}, $u_2$={u_fitted[1]:.5f}"
+                    #)
+                
+                    # plot the white-light curve with the fitted model
+                    plt.figure(figsize = (20, 7))
+                    plt.scatter(t, white_lc, color = 'indianred', alpha = 0.5)
+                    plt.plot(t, lc_model(t, *popt), color = 'black', alpha = 0.5, linewidth = 2, label=legend_text)
+                    plt.xlabel('Time (days)')
+                    plt.ylabel('Normalized flux')
+                    plt.legend()
+                    plt.savefig(batman_out_folder + '/{}_white_lc_fit.png'.format(transit_time))
+                    plt.show()
+                
+                    # calculate the residuals
+                    res = white_lc - lc_model(t, *popt)
+                    
+                    # plot residuals
+                    plt.figure(figsize = (20, 3))
+                    if white_lc_err is not None:
+                        plt.errorbar(t, 1e6*res, yerr = 1e6*white_lc_err, fmt = 'o', color = 'indianred', alpha = 0.5)
+                    else:
+                        plt.scatter(t, 1e6*res, color = 'indianred', alpha = 0.5)
+                    plt.axhline(1e6*np.mean(res))
+                    plt.axhline(1e6*(np.mean(res) + np.std(res)), linestyle = '--')
+                    plt.axhline(1e6*(np.mean(res) - np.std(res)), linestyle = '--')
+                    plt.xlabel('Time (days)')
+                    plt.ylabel('Residuals (ppm)')
+                    plt.savefig(batman_out_folder + '/{}_white_lc_fit_residuals.png'.format(transit_time))
+                    plt.show()
+                
+                    # Print photon noise and residuals standard deviation
+                    if white_lc_err is not None:
+                        print('Photon noise: {:.1f} ppm'.format(np.mean(white_lc_err)*1e6))
+                    print('Residuals std: {:.1f} ppm\n\n\n\n\n'.format(np.std(res)*1e6))
+            
+            
+            ######################################### FIT SPECTRAL LIGHT CURVES #########################################
+            # initialize batman model with known system parameters
+            
+            if batman_u_fitted_list_to_use is not None and batman_fit_params['u']:
+                raise ValueError("batman_u_fitted_list_to_use is not None, yet batman_fit_params['u'] is True.")
+            if batman_a_fitted_list_to_use is not None and batman_fit_params['a']:
+                raise ValueError("batman_a_fitted_list_to_use is not None, yet batman_fit_params['a'] is True.")
+            if batman_b_to_fix is not None and batman_fit_params['inc']:
+                raise ValueError("batman_b_to_fix is not None, yet batman_fit_params['inc'] is True.")
+            
+            #global params
+            params = batman.TransitParams()       # object to store transit parameters
+            if batman_ini_pars is None: #if no initial parameters are provided, initialise them according to those in the conf file and/or those fitted previously
+                if batman_fit_white_lc: #initialise according to params fitted on the white_lc and those in the conf file
+                    params.inc = inc_fitted #orbital inclination (in degrees)
+                    params.ecc = ecc                        # eccentricity
+                    params.w = omega*180/np.pi              # longitude of periastron (in degrees)
+                    params.a = a_fitted                     # semi-major axis
+                    if batman_fit_period_for_white_lc:
+                        params.per = per_fitted
+                    else:
+                        params.per = self.planet_period                 # orbital period
+                    params.rp =  rp_fitted                  # planetary radius 
+                    params.t0 = t0_fitted                      # time of mid-transit
+                    params.limb_dark = batman_ld_law #'quadratic'        # limb-darkening law
+                    params.u = u_fitted                   # limb-darkening coefficients
+                else: #initialise according to params in the conf file
+                    # limb-darkening coefficients
+                    u1, u2 = 0.5, 0.5 #0.15, 0.15#0.088, 0.15
+                    u3, u4 = 0.5, 0.5
+                    
+                    if(self.planet_esinw==0 and self.planet_ecosw==0):
+                       ecc=0
+                       omega=90  * np.pi / 180.
+                    else:
+                       ecc=np.sqrt(self.planet_esinw**2+self.planet_ecosw**2)
+                       omega=np.arctan2(self.planet_esinw,self.planet_ecosw)
+                    
+                    params.inc = inclination #orbital inclination (in degrees)
+                    params.ecc = ecc                        # eccentricity
+                    params.w = omega*180/np.pi              # longitude of periastron (in degrees)
+                    params.a = self.planet_semi_major_axis                     # semi-major axis
+                    params.per = self.planet_period                 # orbital period
+                    params.rp =  self.planet_radius                  # planetary radius 
+                    params.t0 = transit_time                      # time of mid-transit
+                    params.limb_dark = batman_ld_law #'quadratic'        # limb-darkening law
+                    if batman_ld_law == 'linear':
+                        params.u = [u1] # limb-darkening coefficients
+                    elif batman_ld_law == 'quadratic':
+                        params.u = [u1, u2]                   # limb-darkening coefficients
+                    elif batman_ld_law == 'nonlinear':
+                        params.u = [u1, u2, u3, u4]                   # limb-darkening coefficients
+                    elif batman_ld_law == 'three-parameter': #This is equivalent to the 'nonlinear' law from batman but with c1=0, it's the Claret four parameter law with c1=0. This is named "Kipping–Sing limb darkening law" on this paper and is recommended especially for high impact parameters: https://arxiv.org/pdf/2410.1861
+                        params.u = [0, u2, u3, u4]
+                    else:
+                        raise ValueError(f"Unsupported limb-darkening law: {batman_ld_law}")
+                
+            else: #if initial parameters are provided, use them
+                params.inc,params.ecc,params.w,params.a,params.per,params.rp,params.t0,params.limb_dark,params.u = batman_ini_pars
+                
+                if batman_fit_white_lc: #set parameters fitted previously:
+                    params.inc = inc_fitted #orbital inclination (in degrees)
+                    params.a = a_fitted                     # semi-major axis
+                    params.rp =  rp_fitted                  # planetary radius 
+                    params.t0 = t0_fitted                      # time of mid-transit
+                    params.u = u_fitted
+                
+            
+            
+            
+            # Set the number of limb-darkening coefficients based on the selected law
+            if batman_ld_law == 'linear':
+                u_initial = [params.u[0]]
+                u_bounds = ([0], [1])
+            elif batman_ld_law == 'quadratic':
+                u_initial = [params.u[0], params.u[1]]
+                u_bounds = ([0, 0], [1, 1])
+            elif batman_ld_law == 'nonlinear':
+                u_initial = [params.u[0], params.u[1], params.u[2], params.u[3]]
+                u_bounds = ([0, 0, 0, 0], [1, 1, 1, 1])
+            elif batman_ld_law == 'three-parameter':
+                params.limb_dark = 'nonlinear'
+                u_initial = [params.u[1], params.u[2], params.u[3]]
+                u_bounds = ([0, 0, 0], [1, 1, 1])
+            else:
+                raise ValueError(f"Unsupported limb-darkening law: {batman_ld_law}")
+            
+            model = None
+            if not batman_model_based_3point:
+                # create batman model
+                model = batman.TransitModel(params, t)
+                #print("Model initialized with batman.TransitModel:", model)
+            else:
+                model = None
+                #print("Model not initialised.", model)
+                
+            # Set initial values for the parameters
+            initial_vals = {
+                'rp': params.rp,
+                'a': params.a,
+                't0': params.t0,
+                'inc': params.inc,
+                'per': params.per,
+                'u': u_initial
+            }
+    
+            # Define bounds for the parameters
+            bounds = {
+                'rp': (0, 1),
+                'a': (0, np.inf),
+                't0': (t[0], t[-1]),
+                'inc': (0, 90),
+                'per': (0,np.inf),
+                'u': u_bounds
+            }
+            
+            # Filter the parameters to fit based on `fit_params`
+            parameters_to_fit = [param for param, to_fit in batman_fit_params.items() if to_fit]
+            initial_guess = [initial_vals[param] for param in parameters_to_fit if param != 'u']
+            if 'u' in parameters_to_fit:
+                initial_guess += list(u_initial)
+            #initial_guess = [initial_vals[param] for param in parameters_to_fit]
+            lower_bounds = [bounds[param][0] for param in parameters_to_fit if param != 'u'] # else bounds['u'][0] for param in parameters_to_fit]
+            if 'u' in parameters_to_fit:
+                lower_bounds += list(bounds['u'][0])
+            upper_bounds = [bounds[param][1] for param in parameters_to_fit if param != 'u']
+            if 'u' in parameters_to_fit:
+                upper_bounds += list(bounds['u'][1])
+            
+            # # Filter the parameters to fit based on `fit_params`
+            # parameters_to_fit = [param for param, to_fit in batman_fit_params.items() if to_fit]
+            # initial_guess = [rp_fitted, a_fitted, t0_fitted, *u_initial]
+            # #initial_guess = [initial_vals[param] for param in parameters_to_fit]
+            # lower_bounds = [bounds[param][0] for param in parameters_to_fit if param != 'u' ]+list(bounds['u'][0]) # else bounds['u'][0] for param in parameters_to_fit]
+            # upper_bounds = [bounds[param][1] for param in parameters_to_fit if param != 'u' ]+list(bounds['u'][1]) # else bounds['u'][1] for param in parameters_to_fit]
+            # #lower_bounds = [bounds[param][0] if param != 'u' else bounds['u'][0] for param in parameters_to_fit]
+            # #upper_bounds = [bounds[param][1] if param != 'u' else bounds['u'][1] for param in parameters_to_fit]
+
+
+            if batman_model_based_3point:
+                model_based_depths = []
+            
+            
+            #fit the light curve model to each spectroscopic light curve separately
+            lc_depths = []
+            lc_depths_err = []
+            
+            if plot_model:
+                # Create a colormap
+                cmap = plt.get_cmap('viridis')
+                norm = plt.Normalize(vmin=min(wvs), vmax=max(wvs))
+                
+            u_fitted_list = []
+            a_fitted_list = []
+            for j,wv in enumerate(wvs):
+                
+                #Fit linear trend for each spectral light curve:
+                if batman_fit_linear_trend:
+                    ###Fit linear trend and renormalise data:
+                    # Get flux and time values outside of transit:
+                    f = spectral_lcs[j]
+                    fluxes_out_of_transit = np.concatenate((f[:idx_ini_transit], f[idx_end_transit:]))
+                    times_out_of_transit = np.concatenate((t[:idx_ini_transit], t[idx_end_transit:]))
+                    
+                    
+                    ini_slope = (f[-1] - f[0]) / (t[-1] - t[0])
+                    ini_y_intercept = f[0] - ini_slope * t[0]
+                    
+                    
+                    def linear_trend(t,*p):
+                        """
+                        Linear trend y=a*t+b. p[0] is the y-intercept and p[1] the slope
+                        """
+                        return p[0]+p[1]*t
+                    
+                    popt,pcov = curve_fit(linear_trend,
+                                            times_out_of_transit,
+                                            fluxes_out_of_transit,
+                                            p0=[ini_y_intercept,ini_slope],
+                                            bounds=((ini_y_intercept-2,ini_slope-0.100),(ini_y_intercept+2,ini_slope+0.100)),#((0.2,-0.100),(1.8,0.100)),#((0.4,-0.020),(1.6,0.020)),#bounds=((0.6,-0.002),(1.4,0.002)),
+                                            maxfev=10000)
+                    
+                    
+                    y_intercept,slope = popt
+                    
+                    # Compute the y values for the straight line using the computed slope and y-intercept
+                    ini_straight_line_lc = ini_slope * np.array(t) + ini_y_intercept
+                    straight_line_lc = slope * np.array(t) + y_intercept
+                    straight_line_lc_out_of_transit = slope * np.array(times_out_of_transit) + y_intercept
+                    
+                    
+                    
+                    #Get residuals:
+                    residuals_linear_fit = fluxes_out_of_transit - straight_line_lc_out_of_transit
+                    
+                    #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                    mse_linear_fit = np.sum(residuals_linear_fit**2)/np.shape(residuals_linear_fit)[0]
+                    linear_fit_metrics[wv] = [np.mean(residuals_linear_fit),
+                                                         np.std(residuals_linear_fit),
+                                                         mse_linear_fit]
+                    
+                    if batman_plot_linear_fits:
+                        # Create subplots with specified layout for fit and residuals
+                        fig1, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(8, 6))
+                        
+                        # Access the first axes for the fit plot
+                        ax_fit = axs[0]
+                        ax_fit.plot(t, ini_straight_line_lc, color='red', alpha=0.5, ls='dashed', 
+                                    label="Initial: {}".format([ini_y_intercept, ini_slope]))
+                        ax_fit.plot(t, straight_line_lc, color='purple', alpha=0.5, 
+                                    label="Fitted: {}".format(popt))
+                        ax_fit.scatter(t, f, alpha=0.5)
+                        ax_fit.scatter(times_out_of_transit, fluxes_out_of_transit, alpha=0.5)
+                        
+                        # Plot appearance for the fit plot
+                        ax_fit.set_ylabel('Relative flux')
+                        ax_fit.tick_params(labelbottom=False)  # Hide x-tick labels for the fit plot
+                        ax_fit.legend(fontsize=8)
+                        
+                        # Access the second axes for residuals plot
+                        ax_residuals = axs[1]
+                        ax_residuals.scatter(times_out_of_transit, residuals_linear_fit * 1e6, color='pink', s=0.5, 
+                                             label=r'MSE: {:.2g}'.format(mse_linear_fit))
+                        ax_residuals.axhline(y=0, linestyle='dotted', color='black', linewidth=0.5)
+                        ax_residuals.set_xlabel(r'Time (BJD - 2460000)')
+                        ax_residuals.set_ylabel(r'Residuals (ppm)')
+                        ax_residuals.tick_params(axis='both', which='both', direction='in', right=True, top=True)
+                        ax_residuals.legend(loc='best')
+                        
+                        # Adjust layout and save
+                        fig1.tight_layout()
+                        fig1.savefig(batman_out_folder + '/{}_{}_linear_fit.png'.format(transit_time, wv))
+                        plt.close(fig1)
+                        # # Plot linear fit and residuals
+                        # fig1 = plt.figure(1)
+                        # frame1 = fig1.add_axes((.1,.3,.8,.6))
+                        # plt.plot(t,ini_straight_line_lc,c='red',alpha=0.5,ls='dashed',label="Initial: {}".format([ini_y_intercept,ini_slope]))
+                        # plt.plot(t,straight_line_lc,c='purple',alpha=0.5,label="Fitted: {}".format(popt))
+                        # plt.scatter(t,f,alpha=0.5)
+                        # plt.scatter(times_out_of_transit,fluxes_out_of_transit,alpha=0.5)
+                        
+                        # plt.tight_layout()
+        
+        
+                        # # Plot portion of the lightcurve, axes, etc.:
+                        # plt.ylabel('Relative flux')
+                        # plt.tick_params(labelbottom=False)  # Hide x-tick labels from the bottom
+                        # plt.legend(fontsize=8)
+        
+                        # #ADDING RESIDUALS:
+                        # frame2=fig1.add_axes((.1,.1,.8,.2))
+                        # plt.scatter(times_out_of_transit,residuals_linear_fit*1e6,color='pink',s=0.5,label=r'MSE: {:.2g}'.format(mse_linear_fit))
+                        # plt.axhline(y = 0, linestyle = 'dotted',color='black',linewidth=0.5)
+                        # plt.xlabel(r'Time (BJD - 2460000)')
+                        # plt.ylabel(r'residuals (ppm)')
+                        # #plt.gca().yaxis.set_label_coords(-0.06,0.5)
+                        # plt.tick_params(axis='both',which='both',direction='in',right=True,top=True)
+        
+                        # plt.legend(loc='best')
+                        # plt.savefig(batman_out_folder + '/{}_{}_linear_fit.png'.format(transit_time,wv))
+                        # plt.show()
+        
+                    # Renormalise spectral light curve dividing by linear trend:
+                    f = f / straight_line_lc
+                    spectral_lcs[j] = spectral_lcs[j] / straight_line_lc
+                
+                if spectral_lcs_err is None:
+                    yerr = np.array([0 for i in range(len(t))])
+                else:
+                    yerr = spectral_lcs_err[j],
+                
+                
+                
+
+                # # fit model to light curve
+                # #print("rp_fitted: {}".format(rp_fitted))
+                # #sys.exit("rp_fitted: {}".format(rp_fitted))
+                # def speclc_model(exp_times, *fit_vars):
+                #     # Update `params` with values to be fitted
+                #     param_vals = initial_vals.copy()
+                #     u_values = u_initial.copy()
+                    
+                #     idx = 0
+                #     for i, param in enumerate(parameters_to_fit):
+                #         if param == 'u':
+                #             for k in range(len(u_values)):
+                #                 u_values[k] = fit_vars[idx]
+                #                 idx += 1
+                #         else:
+                #             param_vals[param] = fit_vars[idx]
+                #             idx += 1
+        
+                #     # Update `params` with the fitted parameter values
+                #     params.rp = param_vals['rp']
+                #     params.a = param_vals['a']
+                #     params.t0 = param_vals['t0']
+                #     params.u = u_values
+                    
+                #     return model.light_curve(params)
+                
+                # # Choose a lambda function depending on whether to fix limb darkening
+                # if batman_u_fitted_list_to_use is not None:
+                #     fixed_u_values = batman_u_fitted_list_to_use[j]
+                #     speclc_model = lambda t, *fit_vars: speclc_model(t, *fit_vars, u=fixed_u_values)
+                
+                # Define the main model function with possible fixed `u` and/or `a` values
+                def create_speclc_model(fixed_u=None, fixed_a=None):
+                    def speclc_model(exp_times, *fit_vars):
+                        # Copy initial values to update with fitted parameters
+                        param_vals = initial_vals.copy()
+                        u_values = u_initial.copy()
+                        
+                        idx = 0
+                        for param in parameters_to_fit:
+                            if param == 'u' and fixed_u is None:
+                                # If using three-parameter law, fix u1=0 and fit only u2, u3, u4
+                                if batman_ld_law == 'three-parameter':
+                                    u_values = [0]+list(u_values)
+                                    u_values[0] = 0  # Fix u1=0
+                                    for k in range(1, len(u_values)):#+1):
+                                        u_values[k] = fit_vars[idx]
+                                        idx += 1
+                                else:
+                                    for k in range(len(u_values)):
+                                        u_values[k] = fit_vars[idx]
+                                        idx += 1
+                            elif param == 'a' and fixed_a is None:
+                                param_vals['a'] = fit_vars[idx]
+                                idx += 1
+                            elif param in param_vals:
+                                param_vals[param] = fit_vars[idx]
+                                idx += 1
+                        
+                        
+                
+                        # Assign values to `params`
+                        params.rp = param_vals['rp']
+                        params.a = fixed_a if fixed_a is not None else param_vals['a']
+                        params.t0 = param_vals['t0']
+                        params.inc = param_vals['inc']
+                        params.per = param_vals['per']
+                        params.u = fixed_u if fixed_u is not None else u_values
+                        
+                        if batman_use_kipping_ldc_parametrisation:
+                            if fixed_u is not None:
+                                u_values = fixed_u
+                            if batman_ld_law == 'three-parameter':
+                                third	= 1./3. #0.333333333333333
+                                twopi	= 2*np.pi #6.283185307179586
+                                P1	= 4.500841772313891
+                                P2	= 17.14213562373095
+                                Q1	= 7.996825477806030
+                                Q2	= 8.566161603278331
+                                
+                                alpha_t = u_values[1]
+                                alpha_h = u_values[2]
+                                alpha_r = u_values[3]
+                                c_2 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( -6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                c_3 = (alpha_h**third)*( -Q1 - Q2*np.sqrt(alpha_r)*np.sin(twopi*alpha_t) )
+                                c_4 = (alpha_h**third)*( P1 + 0.25*np.sqrt(alpha_r)*( 6.0*np.cos(twopi*alpha_t) + P2*np.sin(twopi*alpha_t) ) )
+                                params.u = [0, c_2, c_3, c_4]
+                            elif batman_ld_law == 'quadratic':
+                                q1 = u_values[0]
+                                q2 = u_values[1]
+                                params.u = [2*np.sqrt(q1)*q2,np.sqrt(q1)*(1-2*q2)]
+                            else:
+                                raise ValueError("Kipping LDC parametrisation is not yet implemented for LD laws different than quadratic or three-parameter. batman_use_kipping_ldc_parametrisation=True yet batman_ld_law is neither quadratic nor three-parameter.")
+                        
+                        if batman_b_to_fix is not None:
+                            cosi_to_fix_b = (batman_b_to_fix/params.a)*(1+self.planet_esinw)/(1-params.ecc**2) #cosine of planet inclination
+                            params.inc = np.arccos(cosi_to_fix_b)*180./np.pi
+                        
+                        if batman_model_based_3point:
+                            # create batman model
+                            model1 = batman.TransitModel(params, exp_times)
+                        
+                            return model1.light_curve(params)
+                        else:
+                            if model is not None:
+                                return model.light_curve(params)  # Proceed only if model is defined
+                            else:
+                                # Handle the case where model wasn't initialized
+                                raise ValueError("Model was not initialized. Check your batman_model_based_3point condition.")
+                    
+                    return speclc_model
+                
+                
+                # Conditionally create `speclc_model` based on `batman_u_fitted_list_to_use` and `batman_a_fitted_list_to_use`
+                fixed_u_values = batman_u_fitted_list_to_use[j] if batman_u_fitted_list_to_use is not None else None
+                fixed_a_value = batman_a_fitted_list_to_use[j] if batman_a_fitted_list_to_use is not None else None
+                speclc_model = create_speclc_model(fixed_u=fixed_u_values, fixed_a=fixed_a_value)
+
+                                
+                
+                
+                # Create a dictionary to store parameter indices based on `parameters_to_fit`
+                param_index = {}
+                idx = 0
+                for param in parameters_to_fit:
+                    if param == 'u':
+                        # For limb-darkening coefficients, store indices for each coefficient
+                        param_index['u'] = list(range(idx, idx + len(u_initial)))
+                        idx += len(u_initial)
+                    else:
+                        param_index[param] = idx
+                        idx += 1
+                
+                
+                
+                
+                # Fit the model to the data
+                popt, pcov = optimize.curve_fit(speclc_model, 
+                                                t, 
+                                                spectral_lcs[j],
+                                                p0=initial_guess,
+                                                bounds=(lower_bounds, upper_bounds),
+                                                sigma=yerr if spectral_lcs_err is not None else None,
+                                                maxfev=4000,
+                                                ftol=1e-10,
+                                                xtol=1e-10,
+                                                method='trf',
+                                                absolute_sigma=True)
+                
+                
+                # Extract fitted parameters based on indices in `param_index`
+                fitted_params = {}
+                for param, idx in param_index.items():
+                    if param == 'u':
+                        fitted_params[param] = [popt[i] for i in idx]  # Extract limb-darkening coefficients
+                    else:
+                        fitted_params[param] = popt[idx]  # Extract single parameter
+                
+                # Assign fitted parameters to respective variables
+                rp_fitted = fitted_params.get('rp', params.rp) #If 'rp' was in parameters to fit, get the fitted value, otherwise default to params.rp
+                #a_fitted = fitted_params.get('a', params.a)
+                a_fitted = fixed_a_value if fixed_a_value is not None else fitted_params.get('a', params.a)
+                t0_fitted = fitted_params.get('t0', params.t0)
+                inc_fitted = fitted_params.get('inc', params.inc)
+                per_fitted = fitted_params.get('per', params.per)
+                u_fitted = fixed_u_values if fixed_u_values is not None else fitted_params.get('u', params.u)
+                if batman_ld_law == 'three-parameter' and fixed_u_values is None:
+                    u_fitted = [0] + u_fitted
+                # if batman_u_fitted_list_to_use is not None:
+                #     u_fitted = batman_u_fitted_list_to_use[j]
+                # else:
+                #     u_fitted = fitted_params.get('u', params.u)  # List of fitted limb-darkening coefficients
+                
+                # Use `rp_fitted`, `a_fitted`, etc., for any subsequent calculations
+                
+                
+                #log_to_file(batman_out_folder+"/output.log", f"j,wv: {j},{wv}")
+                #log_to_file(batman_out_folder+"/output.log", f"popt: {np.array(popt)}")
+                #log_to_file(batman_out_folder+"/output.log", f"u_fitted: {np.array(u_fitted)}")
+                #log_to_file(batman_out_folder+"/output.log", f"u_initial: {np.array(u_initial)}")
+                #log_to_file(batman_out_folder+"/output.log", f"pcov: {np.array(pcov)}")
+                
+                
+                
+                
+                # estimate error
+                perr = np.sqrt(np.diag(pcov))
+        
+                # save depth and depth error
+                if rp_fitted is not None:
+                    lc_depths.append(rp_fitted**2)
+                    lc_depths_err.append(2 * perr[param_index['rp']] * rp_fitted)
+                #lc_depths.append(popt[0]**2)
+                #lc_depths_err.append(2*perr[0]*popt[0])
+                
+                if batman_u_fitted_list_to_use is None:
+                    u_fitted_list.append(u_fitted)
+                if batman_a_fitted_list_to_use is None:
+                    a_fitted_list.append(a_fitted)
+                
+                #Get residuals:
+                if batman_u_fitted_list_to_use is None:
+                    residuals = spectral_lcs[j] - speclc_model(t, *popt)
+                else:
+                    residuals = spectral_lcs[j] - speclc_model(t, *popt)#, fixed_u_values)
+                
+                #Get fit metrics ([mean(residuals),std(residuals),MSE]):
+                mse = np.sum(residuals**2)/np.shape(residuals)[0]
+                fit_metrics[wv] = [np.mean(residuals),
+                                   np.std(residuals),
+                                   mse]
+                
+                if batman_model_based_3point:
+                    model_based_depths.append((np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)]) - np.min(speclc_model(np.linspace(np.min(t),np.max(t),10000), *popt))) / np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)]))
+                    
+                    out_of_transit_flux = np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)])
+                    print("Before transit flux: {}\nAfter transit flux: {}".format(speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)))
+                    out_of_transit_flux = np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)])
+                    print(f"Out-of-transit flux: {out_of_transit_flux}")
+                    mid_transit_flux = np.min(speclc_model(np.linspace(np.min(t), np.max(t), 10000), *popt))
+                    print(f"Mid-transit flux: {mid_transit_flux}")
+                    
+                    print("Depth: {}".format(((np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)]) - np.min(speclc_model(np.linspace(np.min(t),np.max(t),10000), *popt))) / np.mean([speclc_model(np.array([t[idx_ini_transit-3]]), *popt), speclc_model(np.array([t[idx_end_transit+3]]), *popt)]))))
+
+
+                    
+                
+                if batman_plot_lc_fits:
+                    
+                    legend_text = (
+                        f"$r_p$: {rp_fitted:.5f}\n"
+                        f"Transit depth: {rp_fitted**2 * 1e6:.1f} ppm\n"
+                        f"Mid-transit time: {t0_fitted:.5f} days\n"
+                        f"Semi-major axis: {a_fitted:.5f}\n"
+                        f"Inclination: {inc_fitted:.5f}°\n"
+                        f"Planet period: {per_fitted:.5f} days\n"
+                        + '\n'.join([f"LD coeffs: $u_{i+1}$={u_fitted[i]:.5f}" for i in range(len(u_fitted))])
+                    )
+                    if batman_u_fitted_list_to_use is None:
+                        plt.plot(t, speclc_model(t, *popt), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2, label=legend_text)
+                    else:
+                        plt.plot(t, speclc_model(t, *popt), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2, label=legend_text)# popt[0], batman_u_fitted_list_to_use[j][0], batman_u_fitted_list_to_use[j][1]), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2, label=legend_text)
+                    plt.scatter(t, spectral_lcs[j], color = cmap(norm(wvs[j])), alpha=0.1)
+                    plt.xlabel('Time (days)')
+                    plt.ylabel('Normalized flux')
+                    plt.legend()
+                    plt.savefig(batman_out_folder + '/batman_fits_wv_{}_transit_time_{}.png'.format(wvs[j],transit_time))
+                    plt.show()
+                    plt.close()
+                
+                if j%20==0 and plot_model:
+                    print(f"j={j}, wv={wv}")
+                    if j==0:
+                        fig, ax = plt.subplots()
+                    ax.errorbar(t, spectral_lcs[j], yerr=yerr, fmt='o', color=cmap(norm(wvs[j])), alpha=0.01)
+                if plot_model:
+                    #Plot model:
+                    if batman_u_fitted_list_to_use is None:
+                        ax.plot(t, speclc_model(t, *popt), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2)
+                    else:
+                        ax.plot(t, speclc_model(t, *popt), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2)#popt[0], batman_u_fitted_list_to_use[j][0], batman_u_fitted_list_to_use[j][1]), color = cmap(norm(wvs[j])), alpha = 0.5, linewidth = 2)
+                    
+            
+            
+            if plot_model:
+                # Create a ScalarMappable and associate it with the colormap and normalization
+                sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+                sm.set_array(wvs)  # Add the data to the ScalarMappable
+                
+                cbar = fig.colorbar(sm, ax=ax)
+                cbar.set_label('Wavelength (microns)')
+                ax.set_xlabel('Time (days)')
+                ax.set_ylabel('Normalized flux')
+                fig.savefig(batman_out_folder + '/some_models_batman_fits_transit_time_{}.png'.format(transit_time))
+                plt.close(fig)
+                
+                
+            
+                #Plot transmission spectrum:
+                plt.figure(figsize = (15, 11))
+                plt.errorbar(wvs, np.array(lc_depths)*100, yerr = np.array(lc_depths_err)*100, fmt = 'o', capsize = 2, color = 'indianred', markeredgecolor = 'black')
+                plt.xlabel('Wavelength (microns)')
+                plt.ylabel('Transit depth (%)')
+                plt.savefig(batman_out_folder + '/transit_depth_batman_vs_lambda_transit_time_{}_%.png'.format(transit_time))
+                plt.show()
+                
+                
+                
+            results_depths['batman_curve_fit'] = (np.array(lc_depths))
+            if batman_model_based_3point:
+                results_depths['batman_model_based_3point'] = (np.array(model_based_depths))
+            
+            
+            batman_fit_metrics_list = [fit_metrics_white_lc,list(linear_fit_metrics.values()),list(fit_metrics.values())]
+            
+            
+            if plot_fit_metrics:
+                if batman_fit_white_lc:
+                    #Plot all WHITE LC LINEAR fit metrics for this transit_time:
+                    #  Mean of residuals
+                    plt.plot(range(3),linear_fit_metrics_white_lc)
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("white_lc linear fit metrics")
+                    plt.title("mean(res), std(res), MSE")
+                    plt.savefig(batman_out_folder + '/white_linear_fit_transit_time_{}.png'.format(transit_time))
+                    plt.show()
+                
+                
+                #Plot all LINEAR fit metrics for this transit_time:
+                #  Mean of residuals
+                plt.plot(wvs,[linear_fit_metrics[wv][0] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("mean(residuals)")
+                plt.savefig(batman_out_folder + '/linear_fit_transit_time_{}_mean_residuals.png'.format(transit_time))
+                plt.show()
+                #  Std of residuals
+                plt.plot(wvs,[linear_fit_metrics[wv][1] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("std(residuals)")
+                plt.savefig(batman_out_folder + '/linear_fit_transit_time_{}_std_residuals.png'.format(transit_time))
+                plt.show()
+                #  MSE
+                plt.plot(wvs,[linear_fit_metrics[wv][2] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("MSE")
+                plt.savefig(batman_out_folder + '/linear_fit_transit_time_{}_MSE.png'.format(transit_time))
+                plt.show()
+                
+                
+                
+                
+                if batman_fit_white_lc:
+                    #Plot all WHITE LC fit metrics for this transit_time:
+                    #  Mean of residuals
+                    plt.plot(range(3),fit_metrics_white_lc)
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("white_lc fit metrics")
+                    plt.title("mean(res), std(res), MSE")
+                    plt.savefig(batman_out_folder + '/white_fit_transit_time_{}.png'.format(transit_time))
+                    plt.show()
+                
+                
+                #Plot all fit metrics for this transit_time:
+                #  Mean of residuals
+                plt.plot(wvs,[fit_metrics[wv][0] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("mean(residuals)")
+                plt.savefig(batman_out_folder + '/fit_transit_time_{}_mean_residuals.png'.format(transit_time))
+                plt.show()
+                #  Std of residuals
+                plt.plot(wvs,[fit_metrics[wv][1] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("std(residuals)")
+                plt.savefig(batman_out_folder + '/fit_transit_time_{}_std_residuals.png'.format(transit_time))
+                plt.show()
+                #  MSE
+                plt.plot(wvs,[fit_metrics[wv][2] for wv in wvs])
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("MSE")
+                plt.savefig(batman_out_folder + '/fit_transit_time_{}_MSE.png'.format(transit_time))
+                plt.show()
+                
+            if plot_model:
+                #Plot transit depth vs wavelength for this transit_time:
+                plt.plot(wvs, 1000000*np.array(lc_depths),label="Data")
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("Transit depth (ppm)")
+                plt.legend()
+                plt.savefig(batman_out_folder + '/transit_depth_vs_lambda_transit_time_{}_ppm.png'.format(transit_time))
+                plt.show()
+                
+                if batman_model_based_3point:
+                    # Plot the resulting transit depths across wavelengths
+                    plt.plot(wvs, 1e6 * np.array(model_based_depths), label="Model-Based Transit Depth")
+                    plt.xlabel(r"$\lambda$ [Å]")
+                    plt.ylabel("Transit depth (ppm)")
+                    plt.title("Transit Depth Using Model-Based Flux")
+                    plt.legend()
+                    plt.savefig(batman_out_folder + '/transit_depth_model_based_vs_lambda_transit_time_{}_ppm.png'.format(transit_time))
+                    plt.show()
+            
+            
+            if batman_output_data:
+                #### SAVING DATA:
+                output_base_filename = batman_out_folder + "/transit_depth_vs_wavelength_data_transit_time_{}/".format(transit_time)
+                os.makedirs(os.path.dirname(output_base_filename), exist_ok=True) #Check if directory exists, if not then create it
+                with open(output_base_filename+"transit_depth_vs_lambda.txt","w") as f:
+                    results =  np.array([wvs,np.array(lc_depths)])
+                    np.savetxt(f, results, fmt='%.10f', delimiter="\t")
+                df = pd.DataFrame(list(fit_metrics.items()), columns=['Key', 'Value'])
+                df.to_csv(output_base_filename+"fit_metrics.csv", index=False, sep='\t')
+                df = pd.DataFrame(list(linear_fit_metrics.items()), columns=['Key', 'Value'])
+                df.to_csv(output_base_filename+"linear_fit_metrics.csv", index=False, sep='\t')
+                
+                if batman_fit_white_lc:
+                    with open(output_base_filename+"white_lc_linear_fit_metrics.txt","w") as f:
+                        results =  linear_fit_metrics_white_lc
+                        np.savetxt(f, results, fmt='%.10f', delimiter="\t")
+                    with open(output_base_filename+"white_lc_fit_metrics.txt","w") as f:
+                        results =  fit_metrics_white_lc
+                        np.savetxt(f, results, fmt='%.10f', delimiter="\t")
+            
+            
+        
+        if use_three_point_approx:
+            results_depths['three_point_approx'] = (np.array([(np.mean([spectral_lc[idx_ini_transit],spectral_lc[idx_end_transit]])-np.min(spectral_lc))/np.mean([spectral_lc[idx_ini_transit],spectral_lc[idx_end_transit]]) for spectral_lc in spectral_lcs]))
+            if plot_model:
+                if three_point_out_folder is None:
+                    if batman_out_folder is not None:
+                        three_point_out_folder = batman_out_folder
+                        print("Warning: three_point_out_folder is None, so 3point results were output to batman_out_folder")
+                    elif juliet_out_folder is not None:
+                        three_point_out_folder = juliet_out_folder
+                        print("Warning: three_point_out_folder and batman_out_folder are None, so 3point results were output to juliet_out_folder")
+                    else:
+                        sys.exit("ERROR! three_point_out_folder, batman_out_folder and juliet_out_folder are None. Please provide a folder to output plots!")
+                        
+                plt.plot(wvs,[1000000*results_depth for results_depth in results_depths['three_point_approx']],label="Data")
+                plt.xlabel(r"$\lambda$ [Å]")
+                plt.ylabel("Transit depth (ppm)")
+                plt.title("Transit depth using 3-point approx.")
+                plt.legend()
+                plt.savefig(three_point_out_folder + '/transit_depth_3pointapprox_vs_lambda_transit_time_{}_ppm.png'.format(transit_time))
+                plt.show()
+        
+        
+        # Initialize an empty list to hold the outputs
+        output = []
+        
+        # Add juliet_posteriors if requested
+        if juliet_return_posteriors:
+            output.append(juliet_posteriors)
+        
+        # Add u_fitted_list if requested
+        if batman_return_u_fitted_list:
+            output.append(u_fitted_list)
+        
+        # Add a_fitted_list if requested
+        if batman_return_a_fitted_list:
+            output.append(a_fitted_list)
+        
+        #Add batman_fit_params_list if requested:
+        if batman_return_batman_fit_metrics_list:
+            output.append(batman_fit_metrics_list)
+        
+        # Add results_depths at the end, since it should always be included
+        output.append(results_depths)
+        
+        # Return the output as a tuple if more than one item is in the output list, otherwise return the single item directly
+        return tuple(output) if len(output) > 1 else output[0]
+
+        
+        # if juliet_return_posteriors:
+        #     return juliet_posteriors,results_depths
+        # elif batman_return_u_fitted_list:
+        #     return u_fitted_list,results_depths
+        # elif batman_return_a_fitted_list:
+        #     return a_fitted_list,results_depths
+        # return results_depths
+    
+    
+    # def fit_spectral_lcs(self,use_juliet=False):
+    #     return 
+    
+    # def compute_transmission_spectrum(self,use_juliet=False):
+    #     self.fit_spectral_lcs(use_juliet)
+    #     return
+    
+    
 
 
 
@@ -1145,9 +3151,22 @@ class StarSim(object):
         p_used = np.asarray(res,dtype='object')[:,0]
         best_maps = np.asarray(res,dtype='object')[:,1]
         lnLs = np.asarray(res,dtype='object')[:,2]
+        
+        #print("p_used: {}".format(p_used)) 
+        #print("best_maps: {}".format(best_maps)) 
+        #print("lnLs: {}".format(lnLs)) 
+        
+        p_used_noNones = [p for p in p_used if p is not None]
+        best_maps_noNones = [p for p in best_maps if p is not None]
+        lnLs_noNones = [p for p in lnLs if p is not None]
+        
+        #print("p_used_noNones: {}".format(p_used_noNones)) 
+        #print("best_maps_noNones: {}".format(best_maps_noNones)) 
+        #print("lnLs_noNones: {}".format(lnLs_noNones)) 
 
         ofilename = self.path / 'results' / 'optimize_inversion_SA_stats.npy'
-        np.save(ofilename,np.array([lnLs,p_used,best_maps],dtype='object'),allow_pickle=True)
+        #np.save(ofilename,np.array([lnLs,p_used,best_maps],dtype='object'),allow_pickle=True)
+        np.save(ofilename,np.array([lnLs_noNones,p_used_noNones,best_maps_noNones],dtype='object'),allow_pickle=True)
 
 
 
@@ -1433,7 +3452,10 @@ class StarSim(object):
 
 
 
-    def plot_inversion_results(self,best_maps,lnLs,Npoints=200):
+    def plot_inversion_results(self,best_maps,lnLs,Npoints=200,plot_bestlnL=True,plot_separately=True,time_units="",custom_labels=None,return_store_results=False):
+        # Ensure `custom_labels` is a dictionary, even if not provided
+        if custom_labels is None:
+            custom_labels = {}
 
         self.instruments=[]
         self.observables=[]
@@ -1512,14 +3534,72 @@ class StarSim(object):
 
                         self.compute_forward(observables=j,t=t,inversion=True)
                         if k==bestlnL:
-                            ax[l].plot(t,self.results[j]*offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
+                            if plot_bestlnL:
+                                ax[l].plot(t,self.results[j]*offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
                             ax[l].errorbar(self.data[self.instruments[i]][j]['t'],self.data[self.instruments[i]][j]['y'],np.sqrt(self.data[self.instruments[i]][j]['yerr']**2+jitter**2),fmt='bo',ecolor='lightblue',zorder=10)                        
                             ax[l].set_ylabel('{}_{}'.format(self.instruments[i],j))
                             ax[l].legend()
+                            
+                            
+
                         
                         store_results[k,l,:]=self.results[j]*offset
                         # ax[l].plot(t,self.results[j]*offset,c=cmap.to_rgba(lnLs[k]),alpha=0.5)
                         l+=1
+                        
+                        if k==bestlnL and plot_separately:
+                            # Create a new figure for each individual plot
+                            fig_sep = plt.figure(figsize=(8, 6))
+                            ax_sep = fig_sep.add_subplot(1, 1, 1)  # Create a single subplot in the new figure
+                            
+                            # Apply manual options for ticks and labels
+                            ax_sep.tick_params(axis='both', direction='in', top=True, right=True, labelsize=14)
+    
+                            if plot_bestlnL:
+                                ax_sep.plot(t, self.results[j] * offset, 'r--', zorder=11, label=f'Offset={offset:.5f}, Jitter={jitter:.5f}')
+                            
+                            ax_sep.errorbar(
+                                self.data[self.instruments[i]][j]['t'],
+                                self.data[self.instruments[i]][j]['y'],
+                                np.sqrt(self.data[self.instruments[i]][j]['yerr']**2 + jitter**2),
+                                fmt='bo', ecolor='lightblue', zorder=10,label='Data'
+                            )
+                            
+                            # Add the mean and standard deviation plots
+                            mean_values = np.mean(store_results[:, l - 1, :], axis=0)
+                            std_values = np.std(store_results[:, l - 1, :], axis=0)
+                            ax_sep.plot(t, mean_values, 'k', label='Mean fit')
+                            ax_sep.fill_between(t, mean_values - std_values, mean_values + std_values, color='k', alpha=0.2, label=r'$1\sigma$ range')
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.set_xlabel('Time', fontsize=15)
+                            # #ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.legend(fontsize=14)
+                            
+                            # Generate labels
+                            default_label = f'{self.instruments[i]}_{j}'
+                            ylabel = custom_labels.get(default_label, default_label)  # Use custom label if available
+                            xlabel = f'Time ({time_units})' if time_units else 'Time'
+                            
+                            # Set labels, title, and font sizes manually
+                            ax_sep.set_ylabel(ylabel, fontsize=15)
+                            ax_sep.set_xlabel(xlabel, fontsize=15)
+                            #ax_sep.set_title(f'Inversion Timeseries - {ylabel}', fontsize=15)
+                            ax_sep.legend(fontsize=14)
+    
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}')
+                            # ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}')
+                            # ax_sep.legend()
+                            
+                            # Save and close the individual plot to isolate it
+                            if plot_bestlnL:
+                                ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png'
+                            else:
+                                ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}.png'
+                            # ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{ylabel}.png' # BE CAREFUL, this is problematic if you have repeated labels!!! e.g. if you have more than one "Norm. flux (I-band)".
+                            fig_sep.savefig(ofilename_sep, dpi=200)
+                            plt.close(fig_sep)  # Close the separate figure
                     
 
                     else: #linear offset
@@ -1546,11 +3626,66 @@ class StarSim(object):
                         self.compute_forward(observables=j,t=t,inversion=True)
                         store_results[k,l,:]=self.results[j]+offset
                         if k==bestlnL:
-                            ax[l].plot(t,self.results[j]+offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
+                            if plot_bestlnL:
+                                ax[l].plot(t,self.results[j]+offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
                             ax[l].errorbar(self.data[self.instruments[i]][j]['t'],self.data[self.instruments[i]][j]['y'],np.sqrt(self.data[self.instruments[i]][j]['yerr']**2+jitter**2),fmt='bo',ecolor='lightblue',zorder=10)
                             ax[l].set_ylabel('{}_{}'.format(self.instruments[i],j))
                             ax[l].legend()
                         l+=1
+                        
+                        if k==bestlnL and plot_separately:
+                            # Create a new figure for each individual plot
+                            fig_sep = plt.figure(figsize=(8, 6))
+                            ax_sep = fig_sep.add_subplot(1, 1, 1)  # Create a single subplot in the new figure
+                            
+                            # Apply manual options for ticks and labels
+                            ax_sep.tick_params(axis='both', direction='in', top=True, right=True, labelsize=14)
+    
+                            if plot_bestlnL:
+                                ax_sep.plot(t, self.results[j] + offset, 'r--', zorder=11, label=f'Offset={offset:.5f}, Jitter={jitter:.5f}')
+                            
+                            ax_sep.errorbar(
+                                self.data[self.instruments[i]][j]['t'],
+                                self.data[self.instruments[i]][j]['y'],
+                                np.sqrt(self.data[self.instruments[i]][j]['yerr']**2 + jitter**2),
+                                fmt='bo', ecolor='lightblue', zorder=10,label='Data'
+                            )
+                            
+                            # Add the mean and standard deviation plots
+                            mean_values = np.mean(store_results[:, l - 1, :], axis=0)
+                            std_values = np.std(store_results[:, l - 1, :], axis=0)
+                            ax_sep.plot(t, mean_values, 'k', label='Mean fit')
+                            ax_sep.fill_between(t, mean_values - std_values, mean_values + std_values, color='k', alpha=0.2, label=r'$1\sigma$ range')
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.set_xlabel('Time', fontsize=15)
+                            # #ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.legend(fontsize=14)
+                            
+                            # Generate labels
+                            default_label = f'{self.instruments[i]}_{j}'
+                            ylabel = custom_labels.get(default_label, default_label)  # Use custom label if available
+                            xlabel = f'Time ({time_units})' if time_units else 'Time'
+                            
+                            # Set labels, title, and font sizes manually
+                            ax_sep.set_ylabel(ylabel, fontsize=15)
+                            ax_sep.set_xlabel(xlabel, fontsize=15)
+                            #ax_sep.set_title(f'Inversion Timeseries - {ylabel}', fontsize=15)
+                            ax_sep.legend(fontsize=14)
+    
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}')
+                            # ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}')
+                            # ax_sep.legend()
+                            
+                            # Save and close the individual plot to isolate it
+                            if plot_bestlnL:
+                                ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png'
+                            else:
+                                ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}.png'
+                            # ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{ylabel}.png' # BE CAREFUL, this is problematic if you have repeated labels!!! e.g. if you have more than one "Norm. flux (I-band)".
+                            fig_sep.savefig(ofilename_sep, dpi=200)
+                            plt.close(fig_sep)  # Close the separate figure
 
         for i in range(num_obs):
             ax[i].plot(t,np.mean(store_results[:,i],axis=0),'k')
@@ -1558,11 +3693,16 @@ class StarSim(object):
             
 
 
-
-        ofilename = self.path  / 'plots' / 'inversion_timeseries_result.png'
+        if plot_bestlnL:
+            ofilename = self.path  / 'plots' / 'inversion_timeseries_result_plotbestlnL.png'
+        else:
+            ofilename = self.path  / 'plots' / 'inversion_timeseries_result.png'
         plt.savefig(ofilename,dpi=200)
         # plt.show(block=True)
         plt.close()
+        
+        if return_store_results:
+            return store_results
 
     
     def plot_spot_map(self,best_maps,tref=None):
@@ -1666,7 +3806,10 @@ class StarSim(object):
         # plt.show()
         plt.close()
 
-    def plot_optimize_inversion_SA_results(self,DeltalnL):
+    def plot_optimize_inversion_SA_results(self,DeltalnL,plot_bestlnL=True,equal_aspect_ratio_inv_timeseries=True,results_relative_path=None,plot_separately=True,time_units="",custom_labels=None,plot_relative_path=None):
+        # Ensure `custom_labels` is a dictionary, even if not provided
+        if custom_labels is None:
+            custom_labels = {}
 
         fixed_T = self.temperature_photosphere
         fixed_sp_T = self.spot_T_contrast
@@ -1737,7 +3880,10 @@ class StarSim(object):
 
 
         #read the results
-        filename = self.path / 'results' / 'optimize_inversion_SA_stats.npy'
+        if results_relative_path is None:
+            filename = self.path / 'results' / 'optimize_inversion_SA_stats.npy'
+        else:
+            filename = str(self.path) + results_relative_path
         res = np.load(filename,allow_pickle=True)
 
         lnLs=res[0]
@@ -1768,7 +3914,10 @@ class StarSim(object):
           # plt.xlim([left-(right-left)*0.2,right+(right-left)*0.2])
           plt.xlabel(self.lparamfit[ip])
         
-        ofilename = self.path / 'plots' / 'inversion_MCMCSA_likelihoods.png'
+        if plot_relative_path is None:
+            ofilename = self.path / 'plots' / 'inversion_MCMCSA_likelihoods.png'
+        else:
+            ofilename = str(self.path) + plot_relative_path + '/inversion_MCMCSA_likelihoods.png'
         plt.savefig(ofilename,dpi=200)
         #plt.show(block=True)
         plt.close()
@@ -1782,7 +3931,10 @@ class StarSim(object):
         fig2, axes = plt.subplots(int(ndim),int(ndim), figsize=(2.3*int(ndim),2.3*int(ndim)))
         corner.corner(pcorner.T,bins=10,plot_contours=False,fig=fig2,max_n_ticks=2,labels=self.lparamfit,label_kwargs={'fontsize':13},quantiles=(0.16,0.5,0.84),show_titles=True)
         
-        ofilename = self.path / 'plots' / 'inversion_MCMCSA_cornerplot.png'
+        if plot_relative_path is None:
+            ofilename = self.path / 'plots' / 'inversion_MCMCSA_cornerplot.png'
+        else:
+            ofilename = str(self.path) + plot_relative_path + '/inversion_MCMCSA_cornerplot.png'
         plt.savefig(ofilename,dpi=200)
         #plt.show(block=True)
         plt.close()
@@ -1845,7 +3997,10 @@ class StarSim(object):
         plt.annotate(s, xy=(0.0, 1.0),ha='left',va='top')
         plt.axis('off')
         plt.tight_layout()
-        ofilename = self.path / 'plots' / 'inversion_MCMCSA_results.png'
+        if plot_relative_path is None:
+            ofilename = self.path / 'plots' / 'inversion_MCMCSA_results.png'
+        else:
+            ofilename = str(self.path) + plot_relative_path + '/inversion_MCMCSA_results.png'
         plt.savefig(ofilename,dpi=200)
         plt.close()
 
@@ -1884,14 +4039,18 @@ class StarSim(object):
         t=np.linspace(tmin,tmax,Npoints)
 
         
-
-        fig, ax = plt.subplots(num_obs,1,figsize=(12,12))
+        if equal_aspect_ratio_inv_timeseries:
+            fig, ax = plt.subplots(num_obs, 1, figsize=(12, 12 * num_obs))  # 12 units width and height for each subplot
+        else:
+            fig, ax = plt.subplots(num_obs,1,figsize=(12,12))
         if num_obs == 1:
             ax= [ax]
 
         store_results = np.zeros([len(best_maps_new),num_obs,Npoints])
 
-
+        all_figs_sep = []
+        all_axs_sep = []
+        all_filenames_sep = []
         bestlnL=np.argmax(lnLsnew)
         for k in range(len(best_maps_new)):
             self.spot_map = best_maps_new[k]
@@ -1946,12 +4105,80 @@ class StarSim(object):
 
                         self.compute_forward(observables=j,t=t,inversion=True)
                         if k==bestlnL:
-                            ax[l].plot(t,self.results[j]*offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
+                            if plot_bestlnL:
+                                ax[l].plot(t,self.results[j]*offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
                             ax[l].errorbar(self.data[self.instruments[i]][j]['t'],self.data[self.instruments[i]][j]['y'],np.sqrt(self.data[self.instruments[i]][j]['yerr']**2+jitter**2),fmt='bo',ecolor='lightblue',zorder=10)                        
                             ax[l].set_ylabel('{}_{}'.format(self.instruments[i],j))
                             ax[l].legend()
                         store_results[k,l,:]=self.results[j]*offset
                         l+=1
+                        
+                        if k==bestlnL and plot_separately:
+                            # Create a new figure for each individual plot
+                            fig_sep = plt.figure(figsize=(8, 6))
+                            ax_sep = fig_sep.add_subplot(1, 1, 1)  # Create a single subplot in the new figure
+                            
+                            # Apply manual options for ticks and labels
+                            ax_sep.tick_params(axis='both', direction='in', top=True, right=True, labelsize=14)
+    
+                            if plot_bestlnL:
+                                ax_sep.plot(t, self.results[j] * offset, 'r--', zorder=11, label=f'Offset={offset:.5f}, Jitter={jitter:.5f}')
+                            
+                            ax_sep.errorbar(
+                                self.data[self.instruments[i]][j]['t'],
+                                self.data[self.instruments[i]][j]['y'],
+                                np.sqrt(self.data[self.instruments[i]][j]['yerr']**2 + jitter**2),
+                                fmt='bo', ecolor='lightblue', zorder=10,label='Data'
+                            )
+                            
+                            # # Add the mean and standard deviation plots
+                            # mean_values = np.mean(store_results[:, l - 1, :], axis=0)
+                            # std_values = np.std(store_results[:, l - 1, :], axis=0)
+                            # ax_sep.plot(t, mean_values, 'k', label='Mean fit')
+                            # ax_sep.fill_between(t, mean_values - std_values, mean_values + std_values, color='k', alpha=0.2, label=r'$1\sigma$ range')
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.set_xlabel('Time', fontsize=15)
+                            # #ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.legend(fontsize=14)
+                            
+                            # Generate labels
+                            default_label = f'{self.instruments[i]}_{j}'
+                            ylabel = custom_labels.get(default_label, default_label)  # Use custom label if available
+                            xlabel = f'Time ({time_units})' if time_units else 'Time'
+                            
+                            # Set labels, title, and font sizes manually
+                            ax_sep.set_ylabel(ylabel, fontsize=15)
+                            ax_sep.set_xlabel(xlabel, fontsize=15)
+                            #ax_sep.set_title(f'Inversion Timeseries - {ylabel}', fontsize=15)
+                            #ax_sep.legend(fontsize=14)
+    
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}')
+                            # ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}')
+                            # ax_sep.legend()
+                            
+                            all_figs_sep.append(fig_sep)
+                            all_axs_sep.append(ax_sep)
+                            if plot_bestlnL:
+                                if plot_relative_path is None:
+                                    all_filenames_sep.append(self.path / 'plots' / f'/inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png')
+                                else:
+                                    all_filenames_sep.append(str(self.path) + plot_relative_path + f'/inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png')
+                            else:
+                                if plot_relative_path is None:
+                                    all_filenames_sep.append(self.path / 'plots' / f'/inversion_timeseries_result_{self.instruments[i]}_{j}.png')
+                                else:
+                                    all_filenames_sep.append(str(self.path) + plot_relative_path + f'/inversion_timeseries_result_{self.instruments[i]}_{j}.png')
+                            
+                            # # Save and close the individual plot to isolate it
+                            # if plot_bestlnL:
+                            #     ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png'
+                            # else:
+                            #     ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}.png'
+                            # # ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{ylabel}.png' # BE CAREFUL, this is problematic if you have repeated labels!!! e.g. if you have more than one "Norm. flux (I-band)".
+                            # fig_sep.savefig(ofilename_sep, dpi=200)
+                            # plt.close(fig_sep)  # Close the separate figure
                     
 
                     else: #linear offset
@@ -1978,19 +4205,119 @@ class StarSim(object):
                         self.compute_forward(observables=j,t=t,inversion=True)
                         store_results[k,l,:]=self.results[j]+offset
                         if k==bestlnL:
-                            ax[l].plot(t,self.results[j]+offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
+                            if plot_bestlnL:
+                                ax[l].plot(t,self.results[j]+offset,'r--',zorder=11,label='Offset={:.5f}, Jitter={:.5f}'.format(offset,jitter))
                             ax[l].errorbar(self.data[self.instruments[i]][j]['t'],self.data[self.instruments[i]][j]['y'],np.sqrt(self.data[self.instruments[i]][j]['yerr']**2+jitter**2),fmt='bo',ecolor='lightblue',zorder=10)
                             ax[l].set_ylabel('{}_{}'.format(self.instruments[i],j))
                             ax[l].legend()
                         l+=1
+                        
+                        if k==bestlnL and plot_separately:
+                            # Create a new figure for each individual plot
+                            fig_sep = plt.figure(figsize=(8, 6))
+                            ax_sep = fig_sep.add_subplot(1, 1, 1)  # Create a single subplot in the new figure
+                            
+                            # Apply manual options for ticks and labels
+                            ax_sep.tick_params(axis='both', direction='in', top=True, right=True, labelsize=14)
+    
+                            if plot_bestlnL:
+                                ax_sep.plot(t, self.results[j] + offset, 'r--', zorder=11, label=f'Offset={offset:.5f}, Jitter={jitter:.5f}')
+                            
+                            ax_sep.errorbar(
+                                self.data[self.instruments[i]][j]['t'],
+                                self.data[self.instruments[i]][j]['y'],
+                                np.sqrt(self.data[self.instruments[i]][j]['yerr']**2 + jitter**2),
+                                fmt='bo', ecolor='lightblue', zorder=10,label='Data'
+                            )
+                            
+                            # # Add the mean and standard deviation plots
+                            # mean_values = np.mean(store_results[:, l - 1, :], axis=0)
+                            # std_values = np.std(store_results[:, l - 1, :], axis=0)
+                            # ax_sep.plot(t, mean_values, 'k', label='Mean fit')
+                            # ax_sep.fill_between(t, mean_values - std_values, mean_values + std_values, color='k', alpha=0.2, label=r'$1\sigma$ range')
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.set_xlabel('Time', fontsize=15)
+                            # #ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}', fontsize=15)
+                            # ax_sep.legend(fontsize=14)
+                            
+                            # Generate labels
+                            default_label = f'{self.instruments[i]}_{j}'
+                            ylabel = custom_labels.get(default_label, default_label)  # Use custom label if available
+                            xlabel = f'Time ({time_units})' if time_units else 'Time'
+                            
+                            # Set labels, title, and font sizes manually
+                            ax_sep.set_ylabel(ylabel, fontsize=15)
+                            ax_sep.set_xlabel(xlabel, fontsize=15)
+                            #ax_sep.set_title(f'Inversion Timeseries - {ylabel}', fontsize=15)
+                            #ax_sep.legend(fontsize=14)
+    
+    
+                            # ax_sep.set_ylabel(f'{self.instruments[i]}_{j}')
+                            # ax_sep.set_title(f'Inversion Timeseries - {self.instruments[i]}_{j}')
+                            # ax_sep.legend()
+                            
+                            all_figs_sep.append(fig_sep)
+                            all_axs_sep.append(ax_sep)
+                            
+                            if plot_bestlnL:
+                                if plot_relative_path is None:
+                                    all_filenames_sep.append(self.path / 'plots' / f'/inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png')
+                                else:
+                                    all_filenames_sep.append(str(self.path) + plot_relative_path + f'/inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png')
+                            else:
+                                if plot_relative_path is None:
+                                    all_filenames_sep.append(self.path / 'plots' / f'/inversion_timeseries_result_{self.instruments[i]}_{j}.png')
+                                else:
+                                    all_filenames_sep.append(str(self.path) + plot_relative_path + f'/inversion_timeseries_result_{self.instruments[i]}_{j}.png')
+                            # if plot_bestlnL:
+                            #     all_filenames_sep.append(self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png'
+                            # else:
+                            #     all_filenames_sep.append(self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}.png'
+                            
+                            
+                            # # Save and close the individual plot to isolate it
+                            # if plot_bestlnL:
+                            #     ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}_plotbestlnL.png'
+                            # else:
+                            #     ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{self.instruments[i]}_{j}.png'
+                            # # ofilename_sep = self.path / 'plots' / f'inversion_timeseries_result_{ylabel}.png' # BE CAREFUL, this is problematic if you have repeated labels!!! e.g. if you have more than one "Norm. flux (I-band)".
+                            # fig_sep.savefig(ofilename_sep, dpi=200)
+                            # plt.close(fig_sep)  # Close the separate figure
 
         for i in range(num_obs):
             ax[i].plot(t,np.mean(store_results[:,i],axis=0),'k')
             ax[i].fill_between(t,np.mean(store_results[:,i],axis=0)-np.std(store_results[:,i],axis=0),np.mean(store_results[:,i],axis=0)+np.std(store_results[:,i],axis=0),color='k',alpha=0.2)
             
+            if plot_separately:
+                all_axs_sep[i].plot(t,np.mean(store_results[:,i],axis=0),'k',label='Mean fit')
+                all_axs_sep[i].fill_between(t,np.mean(store_results[:,i],axis=0)-np.std(store_results[:,i],axis=0),np.mean(store_results[:,i],axis=0)+np.std(store_results[:,i],axis=0),color='k',alpha=0.2,label=r'$1\sigma$ range')
+                all_axs_sep[i].legend(fontsize=14)
+                
+                
+                
+                all_figs_sep[i].savefig(all_filenames_sep[i], dpi=200)
+                plt.close(all_figs_sep[i])  # Close the separate figure
+            
+            
+        
+        
+        
+            
+        if equal_aspect_ratio_inv_timeseries:
+            plt.tight_layout()  # Add this line to automatically adjust the spacing between subplots
 
-
-        ofilename = self.path  / 'plots' / 'inversion_timeseries_result.png'
+        #ofilename = self.path  / 'plots' / 'inversion_timeseries_result.png'
+        if plot_bestlnL:
+            if plot_relative_path is None:
+                ofilename = self.path  / 'plots' / 'inversion_timeseries_result_plotbestlnL.png'
+            else:
+                ofilename = str(self.path) + plot_relative_path + '/inversion_timeseries_result_plotbestlnL.png'
+        else:
+            if plot_relative_path is None:
+                ofilename = self.path  / 'plots' / 'inversion_timeseries_result.png'
+            else:
+                ofilename = str(self.path) + plot_relative_path + '/inversion_timeseries_result.png'
         plt.savefig(ofilename,dpi=200)
         # plt.show(block=True)
         plt.close()
