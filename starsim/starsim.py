@@ -42,6 +42,8 @@ class StarSim(object):
             self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit'))
             self.wavelength_upper_limit = float(self.conf_file.get('general','wavelength_upper_limit'))
             self.n_grid_rings = int(self.conf_file.get('general','n_grid_rings'))
+            self.phoenix_spectra = int(self.conf_file.get('general','phoenix_spectra'))
+            self.mps_spectra_folder = str(self.conf_file.get('general','mps_spectra_folder'))
             #star
             self.radius = float(self.conf_file.get('star','radius')) #Radius of the star in solar radii
             self.mass = float(self.conf_file.get('star','mass')) #Mass of the star in solar radii
@@ -50,11 +52,8 @@ class StarSim(object):
             self.temperature_photosphere = float(self.conf_file.get('star','temperature_photosphere'))
             self.spot_T_contrast = float(self.conf_file.get('star','spot_T_contrast'))
             self.facula_T_contrast = float(self.conf_file.get('star','facula_T_contrast'))
-            # self.temperature_spot = self.temperature_photosphere - float(self.conf_file.get('star','spot_T_contrast'))
-            # self.temperature_facula = self.temperature_photosphere + float(self.conf_file.get('star','facula_T_contrast'))
             self.convective_shift = float(self.conf_file.get('star','convective_shift'))#CB in m/s
             self.logg = float(self.conf_file.get('star','logg'))
-            self.facular_area_ratio = [] #float(self.conf_file.get('star','facular_area_ratio'))
             self.differential_rotation = float(self.conf_file.get('star','differential_rotation'))
             #rv
             self.ccf_template = str(self.conf_file.get('rv','ccf_template'))
@@ -73,6 +72,10 @@ class StarSim(object):
             self.spots_evo_law = str(self.conf_file.get('spots','spots_evo_law'))
             self.plot_grid_map = int(self.conf_file.get('spots','plot_grid_map'))
             self.reference_time = float(self.conf_file.get('spots','reference_time'))
+            self.sdo_input = int(self.conf_file.get('spots', 'sdo_input'))
+            self.sdo_input_path=str(self.conf_file.get('spots', 'SDO_input_path'))
+
+
             #planet
             self.planet_period = float(self.conf_file.get('planet','planet_period')) #in days
             self.planet_transit_t0 = float(self.conf_file.get('planet','planet_transit_t0')) #in days
@@ -83,7 +86,6 @@ class StarSim(object):
             self.planet_semi_amplitude = float(self.conf_file.get('planet','planet_semi_amplitude')) #in m/s
             self.planet_esinw = float(self.conf_file.get('planet','planet_esinw')) 
             self.planet_ecosw = float(self.conf_file.get('planet','planet_ecosw')) 
-            # self.inc_pl = np.arccos((self.planet_impact_param/self.planet_semi_major_axis)*(1+self.planet_esinw)/(1-np.sqrt(self.planet_esinw**2+self.planet_ecosw**2))) #inclination of the planet orbit
 
             #optimization
             self.prior_spot_initial_time = json.loads(self.conf_file.get('optimization','prior_spot_initial_time'))
@@ -118,7 +120,7 @@ class StarSim(object):
             self.N_cpus = int(self.conf_file.get('optimization','N_cpus'))
             self.N_iters_SA = int(self.conf_file.get('optimization','N_iters_SA'))
             
-            #others
+            #from Òscar implementation
             self.return_Imu = 0 # Returns I(mu) in order to get limb darkening law.
             self.convolve_spec_with_filt = False # If True, it convolves self.results['spec'] with the selected filter in order to get the light curve, which is stored in self.results['spec_lc'].
             self.prova = "lol"
@@ -146,12 +148,47 @@ class StarSim(object):
             #read and check spotmap
             pathspots = self.path / 'spotmap.dat' #path relatve to working directory 
             self.spot_map=np.loadtxt(pathspots)
+            #TODO sort the spot map to have spot before
 
             if self.spot_map.ndim == 1:
                 self.spot_map = np.array([self.spot_map]) #to avoid future errors
             elif self.spot_map.ndim == 0:
                 sys.exit('The spot map file spotmap.dat is empty')
-            self.facular_area_ratio = [self.spot_map[i][0] for i in range(len(self.spot_map))]
+            self.spot_map = self.spot_map[np.argsort(self.spot_map[:,0]),:]
+            self.active_region_types = [self.spot_map[i][0] for i in range(len(self.spot_map))]
+            self.facular_area_ratio = [0.0 for i in range(len(self.spot_map))]
+
+            # SDO input
+            if self.sdo_input:
+                spot_map_list = []
+                faculae_map_list = []
+                t = []
+
+                for filename in os.listdir(self.sdo_input_path):
+                    if filename.startswith("spot_map_") and filename.endswith(".txt"):
+                        time_str = filename[len("spot_map_"):-len(".txt")]
+                        time_val = float(time_str)
+                        data = np.loadtxt(os.path.join(self.sdo_input_path, filename))
+                        spot_map_list.append(data)
+                        t.append(time_val)
+
+    
+
+                t = np.array(t)
+                sort_idx = np.argsort(t)
+                t = t[sort_idx]
+                spot_map_list = [spot_map_list[i] for i in sort_idx]
+                
+                for t_i in t:
+                        data = np.loadtxt(os.path.join(self.sdo_input_path, 'faculae_map_{}.txt').format(t_i))
+                        faculae_map_list.append(data)
+
+                self.obs_times = t
+                self.maps_sp = spot_map_list
+                self.maps_fc = faculae_map_list
+
+
+            
 
             #select mode
             if self.simulation_mode == 'grid':
@@ -192,8 +229,7 @@ class StarSim(object):
                 #Finally, set the wavlength range around the available lines
                 self.wavelength_upper_limit=self.wvm.max()+1
                 self.wavelength_lower_limit=self.wvm.min()-1
-                print(self.wavelength_lower_limit)
-                print(self.wavelength_upper_limit)
+                
 
 
             else:
@@ -252,261 +288,91 @@ class StarSim(object):
 
 
     def compute_forward(self,observables=['lc'],t=None,inversion=False, w='eq_2'):
+        if self.sdo_input:
+            if inversion==False:
+                self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit')) #Repeat this just in case CRX has modified the values
+                self.wavelength_upper_limit = float(self.conf_file.get('general','wavelength_upper_limit'))
+
+                Ngrids, Ngrid_in_ring, centres, amu, rs, alphas, xs, ys, zs, are, pare = nbspectra.generate_grid_coordinates_nb(self.n_grid_rings)
+
+            vec_grid = np.array([xs,ys,zs]).T #coordinates in cartesian
+            r = np.unique(np.round(rs, decimals=6))
+            theta, phi = np.arccos(zs*np.cos(-self.inclination)-xs*np.sin(-self.inclination)), np.arctan2(ys,xs*np.cos(-self.inclination)+zs*np.sin(-self.inclination))#coordinates in the star reference 
 
 
-        if inversion==False:
-            self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit')) #Repeat this just in case CRX has modified the values
-            self.wavelength_upper_limit = float(self.conf_file.get('general','wavelength_upper_limit'))
-            print(self.wavelength_lower_limit)
+            #Main core of the method. Dependingon the observables you want, use lowres or high res spectra
+            if 'lc' in observables: #use LR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
+    
+                #Interpolate PHOENIX intensity models, only spot and photosphere
+                acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
 
+                #Read filter and interpolate it in order to convolve it with the spectra
+                f_filt = spectra.interpolate_filter(self)
 
-        if t is None:
-            sys.exit('Please provide a valid time in compute_forward(observables,t=time)')
-
-        self.obs_times = t
-
-
-        Ngrids, Ngrid_in_ring, centres, amu, rs, alphas, xs, ys, zs, are, pare = nbspectra.generate_grid_coordinates_nb(self.n_grid_rings)
-
-        vec_grid = np.array([xs,ys,zs]).T #coordinates in cartesian
-        theta, phi = np.arccos(zs*np.cos(-self.inclination)-xs*np.sin(-self.inclination)), np.arctan2(ys,xs*np.cos(-self.inclination)+zs*np.sin(-self.inclination))#coordinates in the star reference 
-
-
-        #Main core of the method. Dependingon the observables you want, use lowres or high res spectra
-        if 'lc' in observables: #use LR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
-   
-            #Interpolate PHOENIX intensity models, only spot and photosphere
-            acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-            acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-
-            #Read filter and interpolate it in order to convolve it with the spectra
-            f_filt = spectra.interpolate_filter(self)
-
-             
-            
-            if self.simulation_mode == 'grid':
-                brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
-                brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
-                brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp #if there are no faculae
-                if np.sum(self.facular_area_ratio)>0:
+                
+                
+                if self.simulation_mode == 'grid':
+                    brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
+                    brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
                     brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
-                t,FLUX,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
-                
-
-            #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. NOT FACULAE AND NOT PLANETS YET.
-            elif self.simulation_mode == 'fast': #in fast mode only immaculate photosphere is computed
-                t,FLUX,ff_ph,ff_sp,ff_fc,ff_pl=nbspectra.generate_rotating_photosphere_fast_lc(self.obs_times,Ngrid_in_ring,acd,amu,pare,flnp_lc,flns_lc,f_filt(wvp_lc),self.n_grid_rings,self.use_phoenix_limb_darkening,self.limb_darkening_law,self.limb_darkening_q1,self.limb_darkening_q2,self.spot_map,self.reference_time,self.rotation_period,self.differential_rotation,self.spots_evo_law,self.facular_area_ratio,self.inclination,self.temperature_photosphere,self.temperature_facula,self.simulate_planet,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0,self.planet_period,self.planet_radius,self.planet_impact_param,self.planet_semi_major_axis,self.planet_spin_orbit_angle)
-
-
-            self.results['time']=t
-            self.results['lc']=FLUX
-            self.results['ff_ph']=ff_ph
-            self.results['ff_sp']=ff_sp
-            self.results['ff_pl']=ff_pl
-            self.results['ff_fc']=ff_fc
-
-        
-        if 'spec' in observables:#Oscar: based on the procedure for the 'lc' simulation, simulate the spectra as a function of time. At the moment using LR templates as the 'lc' simulation.
-            
-            #Interpolate PHOENIX intensity models, only spot and photosphere
-            acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-            acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-
-             
-            
-            if self.simulation_mode == 'grid':
-                spec_rings_ph, spec_ph = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
-                spec_rings_sp, spec_sp = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flns_lc,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
-                spec_rings_fc, spec_fc = spec_rings_ph, spec_ph #if there are no faculae
-                if np.sum(self.facular_area_ratio)>0:
-                    spec_rings_fc, spec_fc = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'fc')
-
-                t,SPEC,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_spec(self,Ngrid_in_ring,pare,amu,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
-            
-            
-            elif self.simulation_mode == 'fast':
-                sys.exit("Simulation of 'spec' is unavailable for the 'fast' mode, please use the 'grid' mode.")
-            
-            
-            else:
-                sys.exit("Invalid simulation mode. Only 'grid' mode is available for simulation of 'spec'.")
-            
-            
-            
-            self.results['time']=t
-            self.results['spec']=SPEC
-            self.results['spec_wv']=wvp_lc
-            self.results['ff_ph']=ff_ph
-            self.results['ff_sp']=ff_sp
-            self.results['ff_pl']=ff_pl
-            self.results['ff_fc']=ff_fc
-            
-            
-            if self.convolve_spec_with_filt: # I added this parameter to ask if you want to convolve self.results['spec'] with the selected filter in order to get the light curve.
-                self.results['spec_lc']=spectra.convolve_spec_with_specified_filter(self)
-                
-                # #Read filter and interpolate it in order to convolve it with the spectra
-                # f_filt = spectra.interpolate_filter(self)
-                # spec_lc=np.zeros(len(t)) #brightness for each time step
-                # spec_conv_filt=np.zeros([len(t),len(wvp_lc)]) #spectra for each time step convolved with filter
-                
-                # for k in range(len(t)):
-                #     spec_conv_filt[k,:]=SPEC[k,:]*f_filt(wvp_lc) #convolve with filter.
-                #     spec_lc[k]=np.sum(spec_conv_filt[k,:])
-                
-                # self.results['spec_lc']=spec_lc
-
-
-
-
-        if 'rv' in observables or 'bis' in observables or 'fwhm' in observables or 'contrast' in observables: #use HR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
-            rvel=self.vsini*np.sin(theta)*np.sin(phi)#*np.cos(self.inclination) #radial velocities of each grid
-
-            wv_rv, flnp_rv, flp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-            wv_rv, flns_rv, fls_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-            if np.sum(self.facular_area_ratio)>0:
-                wv_rv, flnf_rv, flf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
-            spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
-            
-
-            #Interpolate also Phoenix intensity models to the Phoenix wavelength. 
-            # if self.use_phoenix_limb_darkening: 
-            acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-            acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-            #acd, wv_rv_LR, flfc_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_facula,self.logg)
-            #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
-            rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
-            #CCF with phoenix model  
-            if self.ccf_template == 'model':
-                ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
-                ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
-                if np.sum(self.facular_area_ratio)>0:            
-                    ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
+                    
+                    FLUX,ff_ph,ff_sp,ff_fc,ff_pl, typ=spectra.generate_rotating_photosphere_lc_sdo(self,Ngrid_in_ring,pare,rs,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,inversion)
+                    
                 else:
-                    ccf_fc=ccf_ph*0.0
+                    sys.exit("Invalid simulation mode. Only 'grid' mode is available")
 
-            elif self.ccf_template == 'mask':
-                if wv_rv.max()<(self.wvm.max()+1) or wv_rv.min()>(self.wvm.min()-1):
-                    sys.exit('Selected wavelength must cover all the mask wavelength range, including 1A overhead covering RV shifts. Units in Angstroms.')
+                self.results['time']=t
+                self.results['lc']=FLUX
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
+                self.results['typ'] = typ
+                
+            if 'rv' in observables or 'bis' in observables or 'fwhm' in observables or 'contrast' in observables: #use HR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
+                rvel=self.vsini*np.sin(theta)*np.sin(phi)#*np.cos(self.inclination) #radial velocities of each grid
+                if self.phoenix_spectra:
+                    wv_rv, flnp_rv, flp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
+                    wv_rv, flns_rv, fls_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+                    wv_rv, flnf_rv, flf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
+                    spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+                    
 
-                ccf_ph = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnp_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
-                ccf_sp = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flns_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
-                if np.sum(self.facular_area_ratio)>0:
-                    ccf_fc = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnf_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    #Interpolate also Phoenix intensity models to the Phoenix wavelength. 
+                    # if self.use_phoenix_limb_darkening: 
+                    acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                    acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+                    #acd, wv_rv_LR, flfc_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_facula,self.logg)
                 else:
-                    ccf_fc=ccf_ph*0.0
-
-            
-
-            #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
-            fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
-            rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
-            fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
-            rv_sp = rv - fun_bis_sp(ccf_sp)
-            rv_fc = rv_ph
-            if np.sum(self.facular_area_ratio)>0:            
-                fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                rv_fc = rv - fun_raw_xbisc(ccf_fc)
-
-            if self.simulation_mode == 'grid':
-
-                ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
-                ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
-                ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
-                ccf_fc_g = ccf_ph_g #to avoid errors, not used
-                if np.sum(self.facular_area_ratio)>0:
-                    # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
-                    ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
-                    #ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel)
-
-
-                RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
-
-                #integrate the ccfs with doppler shifts at each time stamp
-                t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
-                
-
-            #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. 
-            elif self.simulation_mode == 'fast': #in fast mode only immaculate photosphere is computed
-                ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
-                ccf_ph_tot = np.sum(ccf_ph_g,axis=0) #CCF of immaculate rotating pphotosphere
-                RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
-                
-                t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=nbspectra.generate_rotating_photosphere_fast_rv(self.obs_times,Ngrid_in_ring,acd,amu,pare,rv,rv_ph,rv_sp,rv_fc,ccf_ph_tot,ccf_ph,ccf_sp,ccf_fc,flxph,flpk_rv,flsk_rv,self.n_grid_rings,self.use_phoenix_limb_darkening,self.limb_darkening_law,self.limb_darkening_q1,self.limb_darkening_q2,self.spot_map,self.reference_time,self.rotation_period,self.differential_rotation,self.spots_evo_law,self.facular_area_ratio,self.inclination,self.vsini,self.convective_shift,self.temperature_photosphere,self.temperature_facula,self.simulate_planet,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0,self.planet_period,self.planet_radius,self.planet_impact_param,self.planet_semi_major_axis,self.planet_spin_orbit_angle)
-
-
-            if self.simulate_planet:
-                rvkepler = spectra.keplerian_orbit(t,[self.planet_period,self.planet_semi_amplitude,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0])
-            else:
-                rvkepler = 0.0
-
-            ccf_params=spectra.compute_ccf_params(self,rv,CCF,plot_test=False)
-            self.results['time']=self.obs_times
-            self.results['rv']=ccf_params[0] - RV0 + rvkepler #subtract rv of immaculate photosphere
-            self.results['contrast']=ccf_params[1]/C0
-            self.results['fwhm']=ccf_params[2]
-            self.results['bis']=ccf_params[3]
-            self.results['ff_ph']=ff_ph
-            self.results['ff_sp']=ff_sp
-            self.results['ff_pl']=ff_pl
-            self.results['ff_fc']=ff_fc
-            self.results['CCF']=np.vstack((rv,CCF))
-            self.results['raw_xbis'] = ccf_params[4]
-            self.results['raw_ybis'] = ccf_params[5]
-            self.results['pos'] = vec_pos
-            self.results['rv0'] = RV0
-
-
-            
-
-
-
-
-        if 'crx' in observables: #use HR templates in different wavelengths to compute chromatic index. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
-            if w == 'eq_2':
-                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
-            elif w =='eq_1':
-                rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation * np.sin(np.pi/2 - theta)**2) / 360)
-
-            vsini = 1000*2*np.pi*(self.radius*696342)*np.cos(self.inclination)/(rotation_period_lat*86400)
-            rvel=vsini*np.sin(theta)*np.sin(phi) #radial velocities of each grid. Inclination already in vsini
-
-            pathorders = self.path / 'orders_CRX' / self.orders_CRX_filename
-            # print('Reading the file in',pathorders,'containing the wavelengthranges of each echelle order,to compute the CRX')
-            try:
-                orders, wvmins, wvmaxs = np.loadtxt(pathorders,unpack=True)
-            except:
-                sys.exit('Please, provide a valid file containing the order number and wavelength range, inside the folder orders_CRX')
-
-            rvso=np.zeros([len(self.obs_times),len(orders)])
-            conto=np.zeros([len(self.obs_times),len(orders)])
-            fwhmo=np.zeros([len(self.obs_times),len(orders)])
-            biso=np.zeros([len(self.obs_times),len(orders)])
-            for i in range(len(orders)):
-                # print('\nOrder: {:.0f}, wv range: {:.1f}-{:.1f} nm'.format(orders[i],wvmins[i],wvmaxs[i]))
-
-                self.wavelength_lower_limit, self.wavelength_upper_limit = wvmins[i], wvmaxs[i]
-
-                wv_rv, flnp_rv, flp_rv = spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-                wv_rv, flns_rv, fls_rv = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-                if np.sum(self.facular_area_ratio)>0:
-                    wv_rv, flnf_rv, flf_rv = spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
-                spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
-
-
-                acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-                acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-
+                    wv_rv, flnp_rv, flp_rv =spectra.interpolate_mps(self, 'ph') #returns norm spectra and no normalized, interpolated at T and logg
+                    # spot's spectra not available
+                    wv_rv, flns_rv, fls_rv =spectra.interpolate_mps(self, 'ph')
+                    if np.sum(self.active_region_types)>0:
+                        wv_rv, flnf_rv, flf_rv =spectra.interpolate_mps(self, 'fc')
+                    spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+                    acd, wv_rv_LR, flpk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph') #acd is the angles at which the model is computed. 
+                    # spot's spectra not available
+                    acd, wv_rv_LR, flsk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
+                    acd, wv_rv_LR, flfc_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
 
                 #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
                 rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
-                ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
-                ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
-                if np.sum(self.facular_area_ratio)>0:            
-                    rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
+                #CCF with phoenix model  
+                if self.ccf_template == 'model':
+                    ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
+                    ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)          
                     ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
-                else:
-                    ccf_fc = ccf_ph*0.0
+
+
+                elif self.ccf_template == 'mask':
+                    if wv_rv.max()<(self.wvm.max()+1) or wv_rv.min()>(self.wvm.min()-1):
+                        sys.exit('Selected wavelength must cover all the mask wavelength range, including 1A overhead covering RV shifts. Units in Angstroms.')
+
+                    ccf_ph = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnp_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    ccf_sp = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flns_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    ccf_fc = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnf_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                
 
                 #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
                 fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
@@ -514,78 +380,411 @@ class StarSim(object):
                 fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
                 rv_sp = rv - fun_bis_sp(ccf_sp)
                 rv_fc = rv_ph
-
-                if np.sum(self.facular_area_ratio)>0:            
-                    fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                    rv_fc = rv - fun_raw_xbisc(ccf_fc)
-
+                fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
+                rv_fc = rv - fun_raw_xbisc(ccf_fc)
 
                 if self.simulation_mode == 'grid':
-                    #COMPUTE CCFS of each ring of a non-rotating IMMACULATE PHOTOSPHERE, and total flux of the immaculate star
-                    # print('Computing photosphere')
 
                     ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
                     ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
-                    # print('Computing spot')
                     ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
                     ccf_fc_g = ccf_ph_g #to avoid errors, not used
-                    if np.sum(self.facular_area_ratio)>0:
-                        # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
-                        ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel)
-                    
-                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
-                    
-                    #integrate the ccfs with doppler shifts at each time stamp
-                    t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
+                    # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
+                    ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
+                    #ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel)
 
+
+                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+
+                    #integrate the ccfs with doppler shifts at each time stamp
+                    CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv_sdo(self,Ngrid_in_ring,pare,amu,rs,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g, inversion) 
+                    
 
                 #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. 
-                elif self.simulation_mode == 'fast': #in fast mode only immaculate photosphere is computed
-                    ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
-                    ccf_ph_tot = np.sum(ccf_ph_g,axis=0) #CCF of immaculate rotating pphotosphere
-                       
-                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
-                    
-                    t,CCF,ff_ph,ff_sp,ff_fc,ff_pl=nbspectra.generate_rotating_photosphere_fast_rv(self.obs_times,Ngrid_in_ring,acd,amu,pare,rv,rv_ph,rv_sp,rv_fc,ccf_ph_tot,ccf_ph,ccf_sp,ccf_fc,flxph,flpk_rv,flsk_rv,self.n_grid_rings,self.use_phoenix_limb_darkening,self.limb_darkening_law,self.limb_darkening_q1,self.limb_darkening_q2,self.spot_map,self.reference_time,self.rotation_period,self.differential_rotation,self.spots_evo_law,self.facular_area_ratio,self.inclination,self.vsini,self.convective_shift,self.temperature_photosphere,self.temperature_facula,self.simulate_planet,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0,self.planet_period,self.planet_radius,self.planet_impact_param,self.planet_semi_major_axis,self.planet_spin_orbit_angle)
+                else:
+                    sys.exit("Invalid simulation mode. Only 'grid' mode is available")
 
+                if self.simulate_planet:
+                    sys.exit("Planet transit not available with SDO input")
+                else:
+                    rvkepler = 0.0
+
+                ccf_params=spectra.compute_ccf_params(self,rv,CCF,plot_test=False)
+                self.results['time']=self.obs_times
+                self.results['rv']=ccf_params[0] - RV0 + rvkepler #subtract rv of immaculate photosphere
+                self.results['contrast']=ccf_params[1]/C0
+                self.results['fwhm']=ccf_params[2]
+                self.results['bis']=ccf_params[3]
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
+                self.results['CCF']=np.vstack((rv,CCF))
+                self.results['raw_xbis'] = ccf_params[4]
+                self.results['raw_ybis'] = ccf_params[5]
+                self.results['pos'] = vec_pos
+                self.results['rv0'] = RV0
+
+
+
+
+        else:
+            if inversion==False:
+                self.wavelength_lower_limit = float(self.conf_file.get('general','wavelength_lower_limit')) #Repeat this just in case CRX has modified the values
+                self.wavelength_upper_limit = float(self.conf_file.get('general','wavelength_upper_limit'))
+
+
+            if t is None:
+                sys.exit('Please provide a valid time in compute_forward(observables,t=time)')
+
+            self.obs_times = t
+
+
+            Ngrids, Ngrid_in_ring, centres, amu, rs, alphas, xs, ys, zs, are, pare = nbspectra.generate_grid_coordinates_nb(self.n_grid_rings)
+
+            vec_grid = np.array([xs,ys,zs]).T #coordinates in cartesian
+            theta, phi = np.arccos(zs*np.cos(-self.inclination)-xs*np.sin(-self.inclination)), np.arctan2(ys,xs*np.cos(-self.inclination)+zs*np.sin(-self.inclination))#coordinates in the star reference 
+
+
+            #Main core of the method. Dependingon the observables you want, use lowres or high res spectra
+            if 'lc' in observables: #use LR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
+                
+                if self.phoenix_spectra:
+                    print('PHOENIX spectra')
+                    #Interpolate PHOENIX intensity models, only spot and photosphere
+                    acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                    acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+                    flfc_lc = flnp_lc
+                    
+                else:
+                    print('MPS-ATLAS spectra')
+                    acd, wvp_lc, flnp_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
+                    #spot spectra are not available for now
+                    acd, wvp_lc, flns_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
+                    
+                    if np.sum(self.active_region_types) > 0:
+                        acd, wvp_lc, flfc_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
+                    else:
+                        flfc_lc = flnp_lc
+
+                    
+
+
+                #Read filter and interpolate it in order to convolve it with the spectra
+                f_filt = spectra.interpolate_filter(self)
+
+                
+                
+                if self.simulation_mode == 'grid':
+                    brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
+                    brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
+                    brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp #if there are no faculae
+                    if np.sum(self.active_region_types)>0:
+                        brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flfc_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
+                    t,FLUX_n,FLUX, ff_ph,ff_sp,ff_fc,ff_pl,typ=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
+                    
+                else:
+                    sys.exit("Invalid simulation mode. Only 'grid' mode is available")
+
+                self.results['time']=t
+                self.results['lc']=FLUX_n
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
+                self.results['typ'] = typ
+                self.results['flux'] =FLUX
+                self.results['flx_ph'] = flx_ph
+                self.results['flnp_lc'] = flnp_lc
+                
+
+
+
+
+            
+            if 'spec' in observables:#Oscar: based on the procedure for the 'lc' simulation, simulate the spectra as a function of time. At the moment using LR templates as the 'lc' simulation.
+                
+                #Interpolate PHOENIX intensity models, only spot and photosphere
+                acd, wvp_lc, flnp_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                acd, wvp_lc, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+
+                
+                
+                if self.simulation_mode == 'grid':
+                    spec_rings_ph, spec_ph = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
+                    spec_rings_sp, spec_sp = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flns_lc,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
+                    spec_rings_fc, spec_fc = spec_rings_ph, spec_ph #if there are no faculae
+                    if np.sum(self.active_region_types)>0:
+                        spec_rings_fc, spec_fc = spectra.compute_immaculate_spec(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,wvp_lc,'fc')
+
+                    t,SPEC,ff_ph,ff_sp,ff_fc,ff_pl=spectra.generate_rotating_photosphere_spec(self,Ngrid_in_ring,pare,amu,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
+                
+                
+                elif self.simulation_mode == 'fast':
+                    sys.exit("Simulation of 'spec' is unavailable for the 'fast' mode, please use the 'grid' mode.")
+                
+                
+                else:
+                    sys.exit("Invalid simulation mode. Only 'grid' mode is available for simulation of 'spec'.")
+                
+                
+                
+                self.results['time']=t
+                self.results['spec']=SPEC
+                self.results['spec_wv']=wvp_lc
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
+                
+                
+                if self.convolve_spec_with_filt: # I added this parameter to ask if you want to convolve self.results['spec'] with the selected filter in order to get the light curve.
+                    self.results['spec_lc']=spectra.convolve_spec_with_specified_filter(self)
+                    
+                    # #Read filter and interpolate it in order to convolve it with the spectra
+                    # f_filt = spectra.interpolate_filter(self)
+                    # spec_lc=np.zeros(len(t)) #brightness for each time step
+                    # spec_conv_filt=np.zeros([len(t),len(wvp_lc)]) #spectra for each time step convolved with filter
+                    
+                    # for k in range(len(t)):
+                    #     spec_conv_filt[k,:]=SPEC[k,:]*f_filt(wvp_lc) #convolve with filter.
+                    #     spec_lc[k]=np.sum(spec_conv_filt[k,:])
+                    
+                    # self.results['spec_lc']=spec_lc
+
+
+
+
+            if 'rv' in observables or 'bis' in observables or 'fwhm' in observables or 'contrast' in observables: #use HR templates. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
+                rvel=self.vsini*np.sin(theta)*np.sin(phi)#*np.cos(self.inclination) #radial velocities of each grid
+                if self.phoenix_spectra:
+                    wv_rv, flnp_rv, flp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
+                    wv_rv, flns_rv, fls_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+                    if np.sum(self.active_region_types)>0:
+                        wv_rv, flnf_rv, flf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
+                    spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+                    
+
+                    #Interpolate also Phoenix intensity models to the Phoenix wavelength. 
+                    # if self.use_phoenix_limb_darkening: 
+                    acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                    acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+                    #acd, wv_rv_LR, flfc_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_facula,self.logg)
+                else:
+                    wv_rv, flnp_rv, flp_rv =spectra.interpolate_mps(self, 'ph') #returns norm spectra and no normalized, interpolated at T and logg
+                    # spot's spectra not available
+                    wv_rv, flns_rv, fls_rv =spectra.interpolate_mps(self, 'ph')
+                    if np.sum(self.active_region_types)>0:
+                        wv_rv, flnf_rv, flf_rv =spectra.interpolate_mps(self, 'fc')
+                    spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+                    acd, wv_rv_LR, flpk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph') #acd is the angles at which the model is computed. 
+                    # spot's spectra not available
+                    acd, wv_rv_LR, flsk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
+                    acd, wv_rv_LR, flfc_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
+
+                #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
+                rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
+                #CCF with phoenix model  
+                if self.ccf_template == 'model':
+                    ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
+                    ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
+                    if np.sum(self.active_region_types)>0:            
+                        ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
+                    else:
+                        ccf_fc=ccf_ph*0.0
+
+                elif self.ccf_template == 'mask':
+                    if wv_rv.max()<(self.wvm.max()+1) or wv_rv.min()>(self.wvm.min()-1):
+                        sys.exit('Selected wavelength must cover all the mask wavelength range, including 1A overhead covering RV shifts. Units in Angstroms.')
+
+                    ccf_ph = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnp_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    ccf_sp = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flns_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    if np.sum(self.active_region_types)>0:
+                        ccf_fc = nbspectra.cross_correlation_mask(rv,np.asarray(wv_rv,dtype='float64'),np.asarray(flnf_rv,dtype='float64'),np.asarray(self.wvm,dtype='float64'),np.asarray(self.fm,dtype='float64'))
+                    else:
+                        ccf_fc=ccf_ph*0.0
+
+                
+
+                #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
+                fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
+                rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
+                fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
+                rv_sp = rv - fun_bis_sp(ccf_sp)
+                rv_fc = rv_ph
+                if np.sum(self.active_region_types)>0:            
+                    fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
+                    rv_fc = rv - fun_raw_xbisc(ccf_fc)
+
+                if self.simulation_mode == 'grid':
+
+                    ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
+                    ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
+                    ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
+                    ccf_fc_g = ccf_ph_g #to avoid errors, not used
+                    if np.sum(self.active_region_types)>0:
+                        # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
+                        if self.phoenix_spectra:
+                            ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
+                        else:
+                            ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
+
+
+                    RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+
+                    #integrate the ccfs with doppler shifts at each time stamp
+                    t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
+                    
+
+                #FAST MODE ONLY WORKS FOR NON-OVERLAPPING SPOTS. 
+                else:
+                    sys.exit("Invalid simulation mode. Only 'grid' mode is available")
 
                 if self.simulate_planet:
                     rvkepler = spectra.keplerian_orbit(t,[self.planet_period,self.planet_semi_amplitude,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0])
                 else:
                     rvkepler = 0.0
 
-
                 ccf_params=spectra.compute_ccf_params(self,rv,CCF,plot_test=False)
+                self.results['time']=self.obs_times
+                self.results['rv']=ccf_params[0] - RV0 + rvkepler #subtract rv of immaculate photosphere
+                self.results['contrast']=ccf_params[1]/C0
+                self.results['fwhm']=ccf_params[2]
+                self.results['bis']=ccf_params[3]
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
+                self.results['CCF']=np.vstack((rv,CCF))
+                self.results['raw_xbis'] = ccf_params[4]
+                self.results['raw_ybis'] = ccf_params[5]
+                self.results['pos'] = vec_pos
+                self.results['rv0'] = RV0
                 
-                rvso[:,i]=ccf_params[0] + rvkepler #do not subtract offsets, could bias crx
-                conto[:,i]=ccf_params[1]
-                fwhmo[:,i]=ccf_params[2]
-                biso[:,i]=ccf_params[3]
 
-            lambdas = (np.log(wvmaxs)+np.log(wvmins))/2 #natural log of the central wavelength
-            crx=np.zeros(len(self.obs_times))
-            ccx=np.zeros(len(self.obs_times))
-            cfx=np.zeros(len(self.obs_times))
-            cbx=np.zeros(len(self.obs_times))
-            for i in range(len(self.obs_times)): #compute crx for each time
-                crx[i]=np.polyfit(lambdas,rvso[i,:],deg=1)[0] #crx is the slope of the rv as a function of the central wavelength
-                ccx[i]=np.polyfit(lambdas,conto[i,:],deg=1)[0]
-                cfx[i]=np.polyfit(lambdas,fwhmo[i,:],deg=1)[0]
-                cbx[i]=np.polyfit(lambdas,biso[i,:],deg=1)[0]
 
-            self.results['time']=self.obs_times
-            self.rvo=rvso
-            self.conto=conto
-            self.fwhm=fwhmo
-            self.planet_impact_paramiso=biso
-            self.results['ccx']=ccx
-            self.results['cfx']=cfx
-            self.results['cbx']=cbx
-            self.results['crx']=crx
-            self.results['ff_ph']=ff_ph
-            self.results['ff_sp']=ff_sp
-            self.results['ff_pl']=ff_pl
-            self.results['ff_fc']=ff_fc
+                
+
+
+
+
+            if 'crx' in observables: #use HR templates in different wavelengths to compute chromatic index. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
+                if w == 'eq_2':
+                    rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
+                elif w =='eq_1':
+                    rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation * np.sin(np.pi/2 - theta)**2) / 360)
+
+                vsini = 1000*2*np.pi*(self.radius*696342)*np.cos(self.inclination)/(rotation_period_lat*86400)
+                rvel=vsini*np.sin(theta)*np.sin(phi) #radial velocities of each grid. Inclination already in vsini
+
+                pathorders = self.path / 'orders_CRX' / self.orders_CRX_filename
+                # print('Reading the file in',pathorders,'containing the wavelengthranges of each echelle order,to compute the CRX')
+                try:
+                    orders, wvmins, wvmaxs = np.loadtxt(pathorders,unpack=True)
+                except:
+                    sys.exit('Please, provide a valid file containing the order number and wavelength range, inside the folder orders_CRX')
+
+                rvso=np.zeros([len(self.obs_times),len(orders)])
+                conto=np.zeros([len(self.obs_times),len(orders)])
+                fwhmo=np.zeros([len(self.obs_times),len(orders)])
+                biso=np.zeros([len(self.obs_times),len(orders)])
+                for i in range(len(orders)):
+                    # print('\nOrder: {:.0f}, wv range: {:.1f}-{:.1f} nm'.format(orders[i],wvmins[i],wvmaxs[i]))
+
+                    self.wavelength_lower_limit, self.wavelength_upper_limit = wvmins[i], wvmaxs[i]
+
+                    wv_rv, flnp_rv, flp_rv = spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
+                    wv_rv, flns_rv, fls_rv = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+                    if np.sum(self.active_region_types)>0:
+                        wv_rv, flnf_rv, flf_rv = spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
+                    spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
+
+
+                    acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
+                    acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
+
+
+                    #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
+                    rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
+                    ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
+                    ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)
+                    if np.sum(self.active_region_types)>0:            
+                        rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
+                        ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
+                    else:
+                        ccf_fc = ccf_ph*0.0
+
+                    #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
+                    fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
+                    rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
+                    fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
+                    rv_sp = rv - fun_bis_sp(ccf_sp)
+                    rv_fc = rv_ph
+
+                    if np.sum(self.active_region_types)>0:            
+                        fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
+                        rv_fc = rv - fun_raw_xbisc(ccf_fc)
+
+
+                    if self.simulation_mode == 'grid':
+                        #COMPUTE CCFS of each ring of a non-rotating IMMACULATE PHOTOSPHERE, and total flux of the immaculate star
+                        # print('Computing photosphere')
+
+                        ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
+                        ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
+                        # print('Computing spot')
+                        ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
+                        ccf_fc_g = ccf_ph_g #to avoid errors, not used
+                        if np.sum(self.active_region_types)>0:
+                            # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
+                            ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel)
+                        
+                        RV0, C0, F0, B0,_,_ =spectra.compute_ccf_params(self,rv,[ccf_ph_tot],plot_test=False) #compute 0 point of immaculate photosphere
+                        
+                        #integrate the ccfs with doppler shifts at each time stamp
+                        t,CCF,ff_ph,ff_sp,ff_fc,ff_pl, vec_pos=spectra.generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,rv,ccf_ph_tot,ccf_ph_g,ccf_sp_g,ccf_fc_g,vec_grid,inversion,plot_map=self.plot_grid_map) 
+
+
+                    else:
+                        sys.exit("Invalid simulation mode. Only 'grid' mode is available")
+
+                    if self.simulate_planet:
+                        rvkepler = spectra.keplerian_orbit(t,[self.planet_period,self.planet_semi_amplitude,self.planet_esinw,self.planet_ecosw,self.planet_transit_t0])
+                    else:
+                        rvkepler = 0.0
+
+
+                    ccf_params=spectra.compute_ccf_params(self,rv,CCF,plot_test=False)
+                    
+                    rvso[:,i]=ccf_params[0] + rvkepler #do not subtract offsets, could bias crx
+                    conto[:,i]=ccf_params[1]
+                    fwhmo[:,i]=ccf_params[2]
+                    biso[:,i]=ccf_params[3]
+
+                lambdas = (np.log(wvmaxs)+np.log(wvmins))/2 #natural log of the central wavelength
+                crx=np.zeros(len(self.obs_times))
+                ccx=np.zeros(len(self.obs_times))
+                cfx=np.zeros(len(self.obs_times))
+                cbx=np.zeros(len(self.obs_times))
+                for i in range(len(self.obs_times)): #compute crx for each time
+                    crx[i]=np.polyfit(lambdas,rvso[i,:],deg=1)[0] #crx is the slope of the rv as a function of the central wavelength
+                    ccx[i]=np.polyfit(lambdas,conto[i,:],deg=1)[0]
+                    cfx[i]=np.polyfit(lambdas,fwhmo[i,:],deg=1)[0]
+                    cbx[i]=np.polyfit(lambdas,biso[i,:],deg=1)[0]
+
+                self.results['time']=self.obs_times
+                self.rvo=rvso
+                self.conto=conto
+                self.fwhm=fwhmo
+                self.planet_impact_paramiso=biso
+                self.results['ccx']=ccx
+                self.results['cfx']=cfx
+                self.results['cbx']=cbx
+                self.results['crx']=crx
+                self.results['ff_ph']=ff_ph
+                self.results['ff_sp']=ff_sp
+                self.results['ff_pl']=ff_pl
+                self.results['ff_fc']=ff_fc
 
         return 
 
@@ -2591,7 +2790,7 @@ class StarSim(object):
         fixed_T = self.temperature_photosphere
         fixed_sp_T = self.spot_T_contrast
         fixed_fc_T = self.facula_T_contrast
-        fixed_Q = self.facular_area_ratio
+        fixed_Q = self.facular_area_ratio #TODO add in the __init__
         fixed_CB = self.convective_shift
         fixed_Prot = self.rotation_period
         fixed_inc = np.rad2deg(np.pi/2-self.inclination) #in deg. 0 is pole-on

@@ -338,7 +338,7 @@ def limb_darkening_law(LD_law,LD1,LD2,amu):
     return mu
 
 @nb.njit(cache=True,error_model='numpy')
-def compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q):
+def compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo):
     pos=np.zeros((len(spot_map),4))
 
     for i in range(len(spot_map)):
@@ -374,11 +374,8 @@ def compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q):
         else:
             print('Spot evolution law not implemented yet. Only constant and linear are implemented.')
         
-        if Q[i]!=0.0: #to speed up the code when no fac are present
-            rad_fac=np.deg2rad(rad)*m.sqrt(1+Q[i]) 
-        else: rad_fac=0.0
 
-        pos[i]=np.array([np.deg2rad(colat), np.deg2rad(phsr), np.deg2rad(rad), rad_fac])
+        pos[i]=np.array([np.deg2rad(colat), np.deg2rad(phsr), np.deg2rad(rad)])
         #return position and radii of spots at t in radians.
 
     return pos
@@ -509,7 +506,7 @@ def loop_compute_immaculate_nb(N,Ngrid_in_ring,ccf_tot,rvel,rv,rvs_ring,ccf_ring
 
 
 @nb.njit(cache=True,error_model='numpy')
-def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,ccf_ph,ccf_sp,ccf_fc,ccf_ph_tot,vis):
+def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,ccf_ph,ccf_sp,ccf_fc,ccf_ph_tot,vis, active_region_types):
     #define things
     width=np.pi/(2*N-1) #width of one grid element, in radiants
     ccf_tot = ccf_ph_tot
@@ -536,44 +533,46 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
 
         dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #compute the distance to the grid
 
-        if dist>(width/2+spot_pos[l][2]):
-            dsp=0.0
-        else:
-            if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
-                    dsp=1.0
-                else:  #grid partially covered
-                    dsp=-(dist-spot_pos[l][2]-width/2)/width
+        if active_region_types[l] == 0:
+            if dist>(width/2+spot_pos[l][2]):
+                dsp=0.0
+            else:
+                if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                    if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
+                        dsp=1.0
+                    else:  #grid partially covered
+                        dsp=-(dist-spot_pos[l][2]-width/2)/width
 
-            else: #the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                    dsp=(2*spot_pos[l][2]/width)**2                 
-                else: #grid partially covered
-                    dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
+                else: #the grid can completely cover the spot, two cases:
+                    if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                        dsp=(2*spot_pos[l][2]/width)**2                 
+                    else: #grid partially covered
+                        dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
 
 
-        asp+=dsp
+            asp+=dsp
+
+        elif active_region_types[l] == 1:
         #FACULA
-        if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-            continue 
+            # if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
+            #     continue 
 
-        if dist>(width/2+spot_pos[l][3]):
-            dfc=0.0
-        else:
-            if (width/2)<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][3]-(width/2):  #grid completely covered
-                    dfc=1.0 - dsp
-                else:  #grid partially covered
-                    dfc=-(dist-spot_pos[l][3]-width/2)/width - dsp
+            if dist>(width/2+spot_pos[l][2]):
+                dfc=0.0
+            else:
+                if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                    if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
+                        dfc=1.0 
+                    else:  #grid partially covered
+                        dfc=-(dist-spot_pos[l][2]-width/2)/width 
 
-            else: #if the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                    dfc=(2*spot_pos[l][3]/width)**2 - dsp                
-                else: #grid partially covered
-                    dfc =-2*spot_pos[l][3]*(dist-width/2-spot_pos[l][3])/width**2 - dsp
-
-        afc+=dfc
-
+                else: #if the grid can completely cover the spot, two cases:
+                    if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                        dfc=(2*spot_pos[l][2]/width)**2              
+                    else: #grid partially covered
+                        dfc =-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2 
+            dfc -= dsp
+            afc+=dfc
 
     #PLANET
     if simulate_planet:
@@ -584,7 +583,10 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
             if dist>width2/2+planet_pos[2]: apl=0.0
             elif dist<planet_pos[2]-width2/2: apl=1.0
             else: apl=-(dist-planet_pos[2]-width2/2)/width2
-
+    
+    if afc < 0:
+        afc=0.0
+    
     if afc>1.0:
         afc=1.0
 
@@ -638,56 +640,57 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
 
 
                 #SPOT
-                if dist>(width/2+spot_pos[l][2]): #grid not covered 
-                    dsp=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dsp=1.0
-                        else:  #grid partially covered
-                            dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
+                if active_region_types[l] == 0:
+                    if dist>(width/2+spot_pos[l][2]): #grid not covered 
+                        dsp=0.0
+                    
+                    else:
+                        if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                            if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
+                                dsp=1.0
+                            else:  #grid partially covered
+                                dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
 
-                    elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                            dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
-                        else: #grid partially covered
-                            dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
+                        elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
+                            if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                                dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
+                            else: #grid partially covered
+                                dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
 
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
-                        A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
-                        Ar=4*(A1+A2)/width**2
-                        dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
+                        else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                            A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
+                            A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
+                            Ar=4*(A1+A2)/width**2
+                            dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
 
-                asp+=dsp
+                    asp+=dsp
                 #FACULA
-                if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-                    continue 
-                
-                if dist>(width/2+spot_pos[l][3]): #grid not covered by faculae
-                    dfc=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][3]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dfc=1.0-dsp #subtract spot
-                        else:  #grid partially covered
-                            dfc=-(dist-spot_pos[l][3]-width/2)/(width+spot_pos[l][3]-m.sqrt(spot_pos[l][3]**2-(width/2)**2))-dsp
+                elif active_region_types[l] == 1:
+                    # if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
+                    #     continue 
+                    
+                    if dist>(width/2+spot_pos[l][2]): #grid not covered by faculae
+                        dfc=0.0
+                    
+                    else:
+                        if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                            if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
+                                dfc=1.0 #subtract spot
+                            else:  #grid partially covered
+                                dfc=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
+                        elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
+                            if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                                dfc=(np.pi/4)*(2*spot_pos[l][2]/width)**2              
+                            else: #grid partially covered
+                                dfc=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
 
-                    elif (width/2)>spot_pos[l][3]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                            dfc=(np.pi/4)*(2*spot_pos[l][3]/width)**2-dsp               
-                        else: #grid partially covered
-                            dfc=(np.pi/4)*((2*spot_pos[l][3]/width)**2-(2*spot_pos[l][3]/width**2)*(dist-width/2+spot_pos[l][3]))-dsp
-
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][3]**2-(width/2)**2)
-                        A2=(spot_pos[l][3]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][3]**2-(width/2)**2)/spot_pos[l][3]))
-                        Ar=4*(A1+A2)/width**2
-                        dfc=-Ar*(dist-width/2-spot_pos[l][3])/(width/2+spot_pos[l][3])-dsp
-
-                afc+=dfc
+                        else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                            A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
+                            A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
+                            Ar=4*(A1+A2)/width**2
+                            dfc=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
+                    dfc -= dsp
+                    afc+=dfc
 
 
             #PLANET
@@ -700,6 +703,8 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
                     elif dist<planet_pos[2]-width2/2: apl=1.0
                     else: apl=-(dist-planet_pos[2]-width2/2)/width2
 
+            if afc < 0:
+                afc=0.0
 
             if afc>1.0:
                 afc=1.0
@@ -735,11 +740,300 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
     return ccf_tot,typ, Aph, Asp, Afc, Apl
 
 
+@nb.njit(cache=True,error_model='numpy')
+def loop_generate_rotating_nb_sdo(N,Ngrid_in_ring,pare,rs,ccf_ph,ccf_sp,ccf_fc,ccf_ph_tot,sdo_input):
+    #define things
+    width=np.pi/(2*N-1) #width of one grid element, in radiants
+    ccf_tot = ccf_ph_tot
+
+    [array_sp, array_fc] = sdo_input
+    n_pxls = len(array_sp)
+    typ_cell,_, _ = projection_pxl_to_ss_grid(Ngrid_in_ring, rs, n_pxls)
+
+    aph=0.0
+    asp=0.0 #fraction covered by all spots
+    afc=0.0
+    apl=0.0
+    # Central cell
+    k = 0
+
+    idx = typ_cell == k
+    n_tot = np.nansum(idx.ravel())
+
+    if n_tot > 0:
+        asp = np.nansum(array_sp.ravel()[idx.ravel()]) / n_tot
+        afc = np.nansum(array_fc.ravel()[idx.ravel()]) / n_tot
+
+
+    if afc<0.0:
+        afc=0.0
+            
+    if afc>1.0:
+        afc=1.0
+
+    if asp>1.0:
+        asp=1.0
+        afc=0.0
+
+    if apl>1.0:
+        apl=1.0
+        asp=0.0
+        afc=0.0
+
+    if afc + asp > 1.0:
+        afc = 1.0 - asp
+
+    if apl>0.0:
+        asp=asp*(1-apl)
+        afc=afc*(1-apl)
+    
+    aph=1-asp-afc-apl  
+    
+
+    ccf_tot = ccf_tot  - (1-aph)*ccf_ph[k] + asp*ccf_sp[k] + afc*ccf_fc[k]
+    
+    Aph=aph*pare[0]
+    Asp=asp*pare[0]
+    Afc=afc*pare[0]
+    Apl=apl*pare[0]
+    typ=[[aph,asp,afc,apl]]
+
+    for i in range(1,N): #Loop for each ring.
+        for j in range(Ngrid_in_ring[i]): #Loop for each grid
+            k+=1
+            aph=0.0
+            asp=0.0 #fraction covered by all spots
+            afc=0.0
+            apl=0.0
+
+            idx = typ_cell == k
+            n_tot = np.nansum(idx.ravel())
+
+            if n_tot > 0:
+                asp = np.nansum(array_sp.ravel()[idx.ravel()]) / n_tot
+                afc = np.nansum(array_fc.ravel()[idx.ravel()]) / n_tot
+
+            if afc<0.0:
+                afc=0
+                
+            if afc>1.0:
+                afc=1.0
+
+            if asp>1.0:
+                asp=1.0
+                afc=0.0
+
+            if apl>1.0:
+                apl=1.0
+                asp=0.0
+                afc=0.0
+
+            if afc + asp > 1.0:
+                afc = 1.0 - asp
+
+            if apl>0.0:
+                asp=asp*(1-apl)
+                afc=afc*(1-apl)
+            
+            aph=1-asp-afc-apl
+
+
+            ccf_tot = ccf_tot  - (1-aph)*ccf_ph[k] + asp*ccf_sp[k] + afc*ccf_fc[k]
+
+            
+            Aph=Aph+aph*pare[i]
+            Asp=Asp+asp*pare[i]
+            Afc=Afc+afc*pare[i]
+            Apl=Apl+apl*pare[i]
+            typ.append([aph,asp,afc,apl])
+
+    return ccf_tot,typ, Aph, Asp, Afc, Apl
 
 @nb.njit(cache=True,error_model='numpy')
-def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,bph,bsp,bfc,flxph,vis):
- 
+def projection_pxl_to_ss_grid(Ngrid_in_ring, rs, n_pxls):
+    N = len(Ngrid_in_ring)
+    x = np.linspace(-1.0, 1.0, n_pxls)
+    xg = np.empty((n_pxls, n_pxls))
+    yg = np.empty((n_pxls, n_pxls))
+    rg = np.empty((n_pxls, n_pxls))
+    theta_g = np.empty((n_pxls, n_pxls))
+    
+    for i in range(n_pxls):
+        for j in range(n_pxls):
+            x_val = x[j]
+            y_val = x[i]
+            r_val = np.sqrt(x_val**2 + y_val**2)
+            if r_val > 1.0:
+                xg[i, j] = np.nan
+                yg[i, j] = np.nan
+                rg[i, j] = np.nan
+                theta_g[i, j] = np.nan
+            else:
+                xg[i, j] = x_val
+                yg[i, j] = y_val
+                rg[i, j] = r_val
+                angle = np.arctan2(x_val, y_val) + np.pi / 2.0
+                theta_g[i, j] = angle if angle >= 0 else angle + 2 * np.pi
 
+    # Compute lim_r from rs
+    r = np.empty_like(rs)
+    for i in range(rs.shape[0]):
+        r[i] = rs[i]
+    r_sorted = np.sort(r)
+    r_unique = np.empty_like(r)
+    count = 0
+    for i in range(r_sorted.shape[0]):
+        val = np.round(r_sorted[i], 6)
+        if count == 0 or val != r_unique[count - 1]:
+            r_unique[count] = val
+            count += 1
+    r_unique = r_unique[:count]
+
+    lim_r = np.empty(N)
+    for i in range(N - 1):
+        lim_r[i] = (r_unique[i + 1] + r_unique[i]) / 2.0
+    lim_r[N - 1] = 1.0
+
+
+    typ_cell = np.zeros((n_pxls, n_pxls))
+    
+    for i in range(n_pxls):
+        for j in range(n_pxls):
+            r_val = rg[i, j]
+            if not np.isnan(r_val):
+                # Find ring
+                ring = 0
+                while ring < N and lim_r[ring] < r_val:
+                    ring += 1
+                if ring >= N:
+                    ring = N - 1
+                offset = 0
+                for k in range(ring):
+                    offset += Ngrid_in_ring[k]
+                n_cells = Ngrid_in_ring[ring]
+                angle = theta_g[i, j]
+                idx = int(np.round(((angle + np.pi / 2.0) % (2 * np.pi)) / (2 * np.pi / n_cells))) % n_cells
+                typ_cell[i, j] = offset + idx
+            else:
+                typ_cell[i, j] = np.nan
+
+    # Flip horizontally
+    typ_cell = typ_cell[:, ::-1]
+    return typ_cell, xg, yg
+
+
+
+@nb.njit(cache=True,error_model='numpy')
+def loop_generate_rotating_lc_nb_sdo(N,Ngrid_in_ring,pare,rs,bph,bsp,bfc,flxph,sdo_input):
+    flux = flxph
+    [array_sp, array_fc] = sdo_input
+    n_pxls = len(array_sp)
+    typ_cell,_, _ = projection_pxl_to_ss_grid(Ngrid_in_ring, rs, n_pxls)
+    aph=0.0
+    asp=0.0 #fraction covered by all spots
+    afc=0.0
+    apl=0.0
+    # Central cell
+    k = 0
+
+    idx = typ_cell == k
+    n_tot = np.nansum(idx.ravel())
+
+    if n_tot > 0:
+        asp = np.nansum(array_sp.ravel()[idx.ravel()]) / n_tot
+        afc = np.nansum(array_fc.ravel()[idx.ravel()]) / n_tot
+
+
+    if afc<0.0:
+        afc=0.0
+            
+    if afc>1.0:
+        afc=1.0
+
+    if asp>1.0:
+        asp=1.0
+        afc=0.0
+
+    if apl>1.0:
+        apl=1.0
+        asp=0.0
+        afc=0.0
+
+    if afc + asp > 1.0:
+        afc = 1.0 - asp
+
+    if apl>0.0:
+        asp=asp*(1-apl)
+        afc=afc*(1-apl)
+    
+    aph=1-asp-afc-apl  
+    
+
+    #add the corresponding flux to the total flux
+    flux = flux - (1-aph)*bph[0]+asp*bsp[0]+bfc[0]*afc
+    
+    Aph=aph*pare[0]
+    Asp=asp*pare[0]
+    Afc=afc*pare[0]
+    Apl=apl*pare[0]
+    typ=[[aph,asp,afc,apl]]
+
+    for i in range(1,N): #Loop for each ring.
+        for j in range(Ngrid_in_ring[i]): #Loop for each grid
+            k+=1
+            aph=0.0
+            asp=0.0 #fraction covered by all spots
+            afc=0.0
+            apl=0.0
+
+            idx = typ_cell == k
+            n_tot = np.nansum(idx.ravel())
+
+            if n_tot > 0:
+                asp = np.nansum(array_sp.ravel()[idx.ravel()]) / n_tot
+                afc = np.nansum(array_fc.ravel()[idx.ravel()]) / n_tot
+
+            if afc<0.0:
+                afc=0
+                
+            if afc>1.0:
+                afc=1.0
+
+            if asp>1.0:
+                asp=1.0
+                afc=0.0
+
+            if apl>1.0:
+                apl=1.0
+                asp=0.0
+                afc=0.0
+
+            if afc + asp > 1.0:
+                afc = 1.0 - asp
+
+            if apl>0.0:
+                asp=asp*(1-apl)
+                afc=afc*(1-apl)
+            
+            aph=1-asp-afc-apl
+
+
+            flux = flux - (1-aph)*bph[i]+asp*bsp[i]+bfc[i]*afc
+            
+            Aph=Aph+aph*pare[i]
+            Asp=Asp+asp*pare[i]
+            Afc=Afc+afc*pare[i]
+            Apl=Apl+apl*pare[i]
+            typ.append([aph,asp,afc,apl])
+                
+
+    return flux ,typ, Aph, Asp, Afc, Apl
+
+
+
+@nb.njit(cache=True,error_model='numpy')
+def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,bph,bsp,bfc,flxph,vis, active_region_types):
+ 
     #define things
     width=np.pi/(2*N-1) #width of one grid element, in radiants
     flux = flxph
@@ -766,44 +1060,46 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
 
         dist=m.acos(np.dot(vec_grid[iteration],vec_spot[l])) #compute the distance to the grid
 
-        if dist>(width/2+spot_pos[l][2]):
-            dsp=0.0
-        else:
-            if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
-                    dsp=1.0
-                else:  #grid partially covered
-                    dsp=-(dist-spot_pos[l][2]-width/2)/width
+        #SPOT
+        if active_region_types[l] == 0:
 
-            else: #the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                    dsp=(2*spot_pos[l][2]/width)**2                 
-                else: #grid partially covered
-                    dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
+            if dist>(width/2+spot_pos[l][2]):
+                dsp=0.0
+            else:
+                if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                    if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
+                        dsp=1.0
+                    else:  #grid partially covered
+                        dsp=-(dist-spot_pos[l][2]-width/2)/width
+
+                else: #the grid can completely cover the spot, two cases:
+                    if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                        dsp=(2*spot_pos[l][2]/width)**2                 
+                    else: #grid partially covered
+                        dsp=-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2
 
 
-        asp+=dsp
+            asp+=dsp
         #FACULA
-        if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-            continue 
+        elif active_region_types[l] == 1:
 
-        if dist>(width/2+spot_pos[l][3]):
-            dfc=0.0
-        else:
-            if (width/2)<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                if dist<=spot_pos[l][3]-(width/2):  #grid completely covered
-                    dfc=1.0 - dsp
-                else:  #grid partially covered
-                    dfc=-(dist-spot_pos[l][3]-width/2)/width - dsp
 
-            else: #if the grid can completely cover the spot, two cases:
-                if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                    dfc=(2*spot_pos[l][3]/width)**2 - dsp                
-                else: #grid partially covered
-                    dfc =-2*spot_pos[l][3]*(dist-width/2-spot_pos[l][3])/width**2 - dsp
+            if dist>(width/2+spot_pos[l][2]):
+                dfc=0.0
+            else:
+                if (width/2)<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                    if dist<=spot_pos[l][2]-(width/2):  #grid completely covered
+                        dfc=1.0 
+                    else:  #grid partially covered
+                        dfc=-(dist-spot_pos[l][2]-width/2)/width 
 
-        afc+=dfc
-
+                else: #if the grid can completely cover the spot, two cases:
+                    if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                        dfc=(2*spot_pos[l][2]/width)**2               
+                    else: #grid partially covered
+                        dfc =-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2 
+            dfc -= dsp
+            afc+=dfc
 
     #PLANET
     if simulate_planet:
@@ -815,7 +1111,9 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
             elif dist<planet_pos[2]-width2/2: apl=1.0
             else: apl=-(dist-planet_pos[2]-width2/2)/width2
 
-    
+    if afc<0.0:
+        afc=0.0
+
     if afc>1.0:
         afc=1.0
 
@@ -835,10 +1133,11 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
         asp=asp*(1-apl)
         afc=afc*(1-apl)
 
-    aph=1-asp-afc-apl    
+    aph=1-asp-afc-apl  
 
     #add the corresponding flux to the total flux
     flux = flux - (1-aph)*bph[0]+asp*bsp[0]+bfc[0]*afc
+    
 
     Aph=aph*pare[0]
     Asp=asp*pare[0]
@@ -868,56 +1167,59 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
 
 
                 #SPOT
-                if dist>(width/2+spot_pos[l][2]): #grid not covered 
-                    dsp=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dsp=1.0
-                        else:  #grid partially covered
-                            dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
+                if active_region_types[l] == 0:
+                    if dist>(width/2+spot_pos[l][2]): #grid not covered 
+                        dsp=0.0
+                    
+                    else:
+                        if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                            if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
+                                dsp=1.0
+                            else:  #grid partially covered
+                                dsp=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
 
-                    elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
-                            dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
-                        else: #grid partially covered
-                            dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
+                        elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
+                            if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                                dsp=(np.pi/4)*(2*spot_pos[l][2]/width)**2                 
+                            else: #grid partially covered
+                                dsp=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
 
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
-                        A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
-                        Ar=4*(A1+A2)/width**2
-                        dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
+                        else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                            A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
+                            A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
+                            Ar=4*(A1+A2)/width**2
+                            dsp=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
 
-                asp+=dsp
+                    asp+=dsp
+
                 #FACULA
-                if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
-                    continue 
-                
-                if dist>(width/2+spot_pos[l][3]): #grid not covered by faculae
-                    dfc=0.0
-                
-                else:
-                    if (width/m.sqrt(2))<spot_pos[l][3]: #if the spot can cover completely the grid, two cases:
-                        if dist<=(m.sqrt(spot_pos[l][3]**2-(width/2)**2)-width/2):  #grid completely covered
-                            dfc=1.0-dsp #subtract spot
-                        else:  #grid partially covered
-                            dfc=-(dist-spot_pos[l][3]-width/2)/(width+spot_pos[l][3]-m.sqrt(spot_pos[l][3]**2-(width/2)**2))-dsp
+                elif active_region_types[l] == 1:
+                    # if spot_pos[l][3]==0.0: #if radius=0, there is no facula, jump to next spot with continue
+                    #     continue 
+                    
+                    if dist>(width/2+spot_pos[l][2]): #grid not covered by faculae
+                        dfc=0.0
+                    
+                    else:
+                        if (width/m.sqrt(2))<spot_pos[l][2]: #if the spot can cover completely the grid, two cases:
+                            if dist<=(m.sqrt(spot_pos[l][2]**2-(width/2)**2)-width/2):  #grid completely covered
+                                dfc=1.0 #subtract spot
+                            else:  #grid partially covered
+                                dfc=-(dist-spot_pos[l][2]-width/2)/(width+spot_pos[l][2]-m.sqrt(spot_pos[l][2]**2-(width/2)**2))
 
-                    elif (width/2)>spot_pos[l][3]: #if the grid can completely cover the spot, two cases:
-                        if dist<=(width/2-spot_pos[l][3]): #all the spot is inside the grid
-                            dfc=(np.pi/4)*(2*spot_pos[l][3]/width)**2-dsp               
-                        else: #grid partially covered
-                            dfc=(np.pi/4)*((2*spot_pos[l][3]/width)**2-(2*spot_pos[l][3]/width**2)*(dist-width/2+spot_pos[l][3]))-dsp
+                        elif (width/2)>spot_pos[l][2]: #if the grid can completely cover the spot, two cases:
+                            if dist<=(width/2-spot_pos[l][2]): #all the spot is inside the grid
+                                dfc=(np.pi/4)*(2*spot_pos[l][2]/width)**2               
+                            else: #grid partially covered
+                                dfc=(np.pi/4)*((2*spot_pos[l][2]/width)**2-(2*spot_pos[l][2]/width**2)*(dist-width/2+spot_pos[l][2]))
 
-                    else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
-                        A1=(width/2)*m.sqrt(spot_pos[l][3]**2-(width/2)**2)
-                        A2=(spot_pos[l][3]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][3]**2-(width/2)**2)/spot_pos[l][3]))
-                        Ar=4*(A1+A2)/width**2
-                        dfc=-Ar*(dist-width/2-spot_pos[l][3])/(width/2+spot_pos[l][3])-dsp
-
-                afc+=dfc
+                        else: #if the spot is larger than the grid but not enough to cover it, grid partially covered by the spot 
+                            A1=(width/2)*m.sqrt(spot_pos[l][2]**2-(width/2)**2)
+                            A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
+                            Ar=4*(A1+A2)/width**2
+                            dfc=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
+                    dfc -= dsp
+                    afc+=dfc
 
 
             #PLANET
@@ -930,7 +1232,9 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
                     elif dist<planet_pos[2]-width2/2: apl=1.0
                     else: apl=-(dist-planet_pos[2]-width2/2)/width2
 
-
+            if afc<0.0:
+                afc=0.0
+        
             if afc>1.0:
                 afc=1.0
 
@@ -962,337 +1266,10 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
             typ.append([aph,asp,afc,apl])
             
 
-    return flux ,typ, Aph, Asp, Afc, Apl
+    return flux ,typ, Aph, Asp, Afc, Apl, typ
 
 
 
-
-################################################################
-# FAST MODE ROUTINES 
-################################################################
-#PHOTOMETRY
-@nb.njit(cache=True,error_model='numpy')
-def generate_rotating_photosphere_fast_lc(obs_times,Ngrid_in_ring,acd,amu,pare,flnp,flns,filter_trans,N,use_phoenix_mu,LD_law,LD1,LD2,spot_map,ref_time,Prot,diff_rot,Revo,Q,inc,temp_ph,temp_fc,simulate_planet,esinw,ecosw,T0p,Pp,Rpl,b,a,alp):
-    flxph = 0.0 #initialze flux of photosphere
-    sflp=np.zeros(N) #brightness of ring
-    flp=np.zeros((N,len(filter_trans))) #spectra of each ring convolved by filter
-
-
-    ################### IMMACULATE FLUX ###########################
-    #Computing flux of immaculate photosphere and of every pixel
-    for i in range(0,N): #Loop for each ring, to compute the flux of the star.   
-
-        #Interpolate Phoenix intensity models to correct projected ange:
-        if use_phoenix_mu:
-            idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu[i]*0.999999999,side='right') #acd is sorted inversely
-            idx_low=idx_upp+1
-            dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #spectra of the projected angle. includes limb darkening
-        
-        else: #or use a specified limb darkening law to multiply central spectra
-            dlp = flnp[0]*limb_darkening_law(LD_law,LD1,LD2,amu[i])
-
-
-        flp[i,:]=dlp*pare[i]/(4*np.pi)*filter_trans #spectra of one grid in ring N multiplied by the filter.
-        sflp[i]=np.sum(flp[i,:]) #brightness of onegrid in ring N.  
-        flxph=flxph+sflp[i]*Ngrid_in_ring[i] #total BRIGHTNESS of the immaculate photosphere
-
-    ######################## ROTATE PHOTSPHERE FOR EACH TIME ################################
-    flux=flxph+np.zeros((len(obs_times))) #initialize total flux at each timestamp
-    filling_sp=0.0+np.zeros(len(obs_times))
-    filling_ph=m.pi+np.zeros(len(obs_times))
-    filling_pl=0.0+np.zeros(len(obs_times))
-    filling_fc=0.0+np.zeros(len(obs_times))
-
-    for k,t in enumerate(obs_times):
-        
-        if simulate_planet:        
-            planet_pos=compute_planet_pos(t,esinw,ecosw,T0p,Pp,Rpl,b,a,alp)#compute the planet position at current time. In polar coordinates!! 
-        else:
-            planet_pos = np.array([2.0,0.0,0.0],dtype=np.float64)
-
-        if spot_map.size==0:
-            spot_pos=np.expand_dims(np.array([m.pi/2,-m.pi,0.0,0.0]),axis=0)
-        else:
-            spot_pos=compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q) #compute the position of all spots at the current time. Returns theta and phi of each spot.      
-
-        #convert latitude/longitude of spot centre to XYZ
-        vec_spot=np.zeros((len(spot_map),3))
-        for i in range(len(spot_map)):
-            xspot = m.cos(inc)*m.sin(spot_pos[i,0])*m.cos(spot_pos[i,1])+m.sin(inc)*m.cos(spot_pos[i,0])
-            yspot = m.sin(spot_pos[i,0])*m.sin(spot_pos[i,1])
-            zspot = m.cos(spot_pos[i,0])*m.cos(inc)-m.sin(inc)*m.sin(spot_pos[i,0])*m.cos(spot_pos[i,1])
-            vec_spot[i,:]=np.array([xspot,yspot,zspot]).T #spot center in cartesian
-
-        #Loop for each spot.
-        for i in range(len(vec_spot)):
-            
-            if spot_pos[i][2]==0.0: #if radius is 0, go to next spot
-                continue
-
-            dist=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-
-            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q[i])) > (m.pi/2): #spot & facula not visible. Jump to next spot.
-                continue
-            
-            beta=np.pi/2-dist #angle of the spot with the edge of the star
-            alpha=spot_pos[i,2] #angle of the radii of the spot
-            ############ FACULA PROJECTED AREA ##################
-            if Q[i]>0.0: #facula
-                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q[i]) #angle of the radii of the faculae
-                #CASE 1: FACULA OUTSIDE OUTSIDE-> NULL, ALREADY EVALUATED BEFORE
-                
-                #CASE 2: ALL FACULAE INSIDE -> ELLIPSE 
-                if 0.0 < alphaf <= beta:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-
-                    Ape=ax*ay*m.pi/4.0
-                    pare_fac =  2.0*2.0*Ape #area of ellipse (projected area of spot)
-                    amu_fac=m.cos(dist)
-
-                #CASE 3: MOST OF THE FACULA INSIDE -> ELLIPSE + LUNE
-                elif 0.0 <= beta < alphaf:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-                                    
-                    yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)   
-
-                    ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                    Ape=ax*ay*m.pi/4.0 #y=ay
-                    Apep= ax*ay*0.5*((ylay)*m.sqrt(1.0-(ylay)**2)+m.asin((ylay)))# y''=yl
-                    Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alphaf)*m.cos(beta)
-
-                    pare_fac = 2.0*(2.0*Ape + Apcp - Apep) #proj. area is described in Urena et al. Stratified Sampling of Projected Spherical Caps
-                    amu_fac=m.sin((beta+alphaf)/2.0) #representative mu as the mean point between edge of spot and of star
-
-
-                #CASE 4: MOST OF THE FACULA OUTSIDE-> LUNE
-                elif 0.0 < (-beta) < alphaf:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-                                    
-                    yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)  #intesection x and y between ellipse and lune 
-
-                    ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                    Apep= ax*ay*0.5*((ylay)*m.sqrt(1-(ylay)**2)+m.asin((ylay)))# y''=yl
-                    Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alphaf)*m.cos(beta)
-
-                    pare_fac = 2.0*(Apep + Apcp) #proj. area is area of lune  
-                    amu_fac=m.sin((beta+alphaf)/2.0)
-
-
-            ######### SPOT PROJECTED AREA ############
-            #CASE 1: SPOT OUTSIDE-> NULL
-            if 0.0 <= alpha <= (-beta):
-                pare_spot=0.0
-                amu_spot=0.0
-            
-            #CASE 2: ALL SPOT INSIDE -> ELLIPSE 
-            elif 0.0 < alpha <= beta:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-
-                Ape=ax*ay*m.pi/4.0
-                pare_spot =  2.0*2.0*Ape #area of ellipse (projected area of spot)
-                amu_spot=m.cos(dist)
-
-            #CASE 3: MOST OF THE SPOT INSIDE -> ELLIPSE + LUNE
-            elif 0.0 <= beta < alpha:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-                                
-                yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)   
-
-                ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                Ape=ax*ay*m.pi/4.0 #y=ay
-                Apep= ax*ay*0.5*((ylay)*m.sqrt(1.0-(ylay)**2)+m.asin((ylay)))# y''=yl
-                Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alpha)*m.cos(beta)
-
-                pare_spot = 2.0*(2.0*Ape + Apcp - Apep) #proj. area is described in Urena et al. Stratified Sampling of Projected Spherical Caps
-                amu_spot=m.sin((beta+alpha)/2.0) #representative mu as the mean point between edge of spot and of star
-
-            #CASE 4: MOST OF THE SPOT OUTSIDE-> LUNE
-            elif 0.0 < (-beta) < alpha:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-                                
-                yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)  #intesection x and y between ellipse and lune 
-
-                ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                Apep= ax*ay*0.5*((ylay)*m.sqrt(1-(ylay)**2)+m.asin((ylay)))# y''=yl
-                Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alpha)*m.cos(beta)
-
-                pare_spot = 2.0*(Apep + Apcp) #proj. area is area of lune  
-                amu_spot=m.sin((beta+alpha)/2.0)
-        
-
-            #Spot, photosphere, and faculae flux at the angle of the spot
-
-            if use_phoenix_mu:
-                
-                idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_spot*0.999999999,side='right') #acd is sorted inversely
-                idx_low=idx_upp+1
-                dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu_spot-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                dls = flns[idx_low]+(flns[idx_upp]-flns[idx_low])*(amu_spot-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening
-
-            else: #or use a specified limb darkening law
-                ld=limb_darkening_law(LD_law,LD1,LD2,amu_spot)
-                dlp = flnp[0]*ld
-                dls = flns[0]*ld
-
-
-            flux_phsp=np.sum(dlp*pare_spot/(4*np.pi)*filter_trans) #flux of the photosphere occuppied by the spot.
-            flux_sp=np.sum(dls*pare_spot/(4*np.pi)*filter_trans) #flux of the spot
-
-
-
-
-            if Q[i]>0.0:
-
-                pare_facula= pare_fac - pare_spot
-
-                if use_phoenix_mu:                   
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_fac*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu_fac-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_fac)
-                    dlp = flnp[0]*ld
-
-                flux_phfc=np.sum(dlp*pare_fac/(4*np.pi)*filter_trans) #flux of the photosphere occuppied by the spot.
-
-                dtfmu=250.9-407.4*amu_fac+190.9*amu_fac**2 #(T_fac-T_ph) multiplied by a factor depending on the 
-                flux_fc=np.sum(dlp*pare_fac/(4*np.pi)*filter_trans)*((temp_ph+dtfmu)/(temp_fc))**4 #flux of the spot
-
-            else:
-                flux_phfc = 0.0
-                flux_fc = 0.0
-                pare_facula = 0.0
-
-
-            flux[k] = flux[k] - flux_phsp + flux_sp - flux_phfc + flux_fc #total flux - photosphere + spot
-            filling_sp[k] = filling_sp[k] + pare_spot
-            filling_ph[k] = filling_ph[k] - pare_spot - pare_facula
-            filling_fc[k] = filling_fc[k] + pare_facula
-        
-
-
-        ################### PLANETARY TRANSIT PROJECTED AREA ########################
-
-        if simulate_planet:
-            if planet_pos[0]-planet_pos[2]>= 1.0: #all planet outside
-                pare_pl = 0.0
-                amu_pl = 0.0
-                block = 'none'
-
-            elif planet_pos[0]+planet_pos[2] <= 1.0: #all planet inside
-                pare_pl = m.pi*planet_pos[2]**2 #area of a circle
-                amu_pl = m.sqrt(1-planet_pos[0]**2) #cos(mu)**2=1-sin(mu)**2=1-r**2
-
-                block='ph'
-                for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
-                    distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
-                        block='ph'
-                        continue 
-
-                    dist=m.acos(np.dot(np.array([m.cos(m.asin(planet_pos[0])),planet_pos[0]*m.cos(planet_pos[1]),planet_pos[0]*m.sin(planet_pos[1])]),vec_spot[i])) #spot-planet centers distance
-                    
-                    if dist < spot_pos[i,2]: #if the distance is lower than spot radius, most of the planet is inside the spot
-                        if (distsp-spot_pos[i,2]) >= (m.pi/2): #if spot is not visible
-                            block='ph'
-                        else:
-                            block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
-                            block = 'fc'
-                    elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
-                        block = 'ph' #else, the planet is blocking photosphere
-
-            else: #the planet is partially covering the star.
-                
-                d1=(1-planet_pos[2]**2+planet_pos[0]**2)/(2*planet_pos[0]) #dist from star centre to centre of intersection
-                d2=planet_pos[0]-d1 #dist from centre of planet to centre of intersection
-                dedge = 1-(1+planet_pos[2]-planet_pos[0])/2 #dist from centre star to centre intersection
-                pare_pl = m.acos(d1) - d1*m.sqrt(1-d1**2) + planet_pos[2]**2*m.acos(d2/planet_pos[2]) - d2*m.sqrt(planet_pos[2]**2-d2**2) #area of intersection star-planet
-                amu_pl = m.sqrt(1-(dedge)**2) #amu is represented by the mean point of the intersection.
-                
-                block='ph'
-                for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
-                    distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
-                        block='ph'
-                        continue 
-
-                    dist=m.acos(np.dot(np.array([m.cos(m.asin(dedge)),dedge*m.cos(planet_pos[1]),dedge*m.sin(planet_pos[1])]),vec_spot[i])) #distance from spot to centre of planet-star intersection
-
-                    if dist < spot_pos[i,2]: #if the distance is lower than spot radius, most of the planet is inside the spot
-                        if (distsp-spot_pos[i,2]) > (m.pi/2): #if spot is not visible
-                            block='ph'
-                        else:
-                            block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
-                        block = 'fc'
-                    elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
-                        block = 'ph' #else, the planet is blocking photosphere
-
-
-            #compute and subtract flux blocked by the planet
-            if block == 'ph': 
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dlp = flnp[0]*ld
-
-                flux_pl=np.sum(dlp*pare_pl/(4*np.pi)*filter_trans) #flux of the photosphere occuppied by the planet.
-                flux[k] = flux[k] - flux_pl #total flux - flux blocked
-                filling_ph[k] = filling_ph[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-
-            if block == 'sp': #flux blocked by the planet
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dls = flns[idx_low]+(flns[idx_upp]-flns[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dls = flns[0]*ld
-
-                flux_pl=np.sum(dls*pare_pl/(4*np.pi)*filter_trans) #flux of the photosphere occuppied by the planet.
-                flux[k] = flux[k] - flux_pl #total flux - flux blocked
-                filling_sp[k] = filling_sp[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-            if block == 'fc': #flux blocked by the spot
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dlp = flnp[0]*ld
-
-                dtfmu=250.9-407.4*amu_pl+190.9*amu_pl**2 #(T_fac-T_ph) multiplied by a factor depending on the 
-                flux_pl=np.sum(dlp*pare_pl/(4*np.pi)*filter_trans)*((temp_ph+dtfmu)/(temp_fc))**4 #flux of the facula occuppied by the planet.
-                flux[k] = flux[k] - flux_pl #total flux - flux blocked
-                filling_fc[k] = filling_fc[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-
-        filling_ph[k]=100*filling_ph[k]/m.pi
-        filling_sp[k]=100*filling_sp[k]/m.pi
-        filling_fc[k]=100*filling_fc[k]/m.pi
-        filling_pl[k]=100*filling_pl[k]/m.pi    
-
-    return obs_times, flux/flxph, filling_ph, filling_sp, filling_fc, filling_pl
 
 
 ###############
@@ -1335,411 +1312,13 @@ def fun_cifist(ccf,amu):
     rv = cxu[0]*ccf**6 + cxu[1]*ccf**5 + cxu[2]*ccf**4 + cxu[3]*ccf**3 + cxu[4]*ccf**2 + cxu[5]*ccf + cxu[6]
     return rv
 
-@nb.njit(cache=True,error_model='numpy') 
-def generate_rotating_photosphere_fast_rv(obs_times,Ngrid_in_ring,acd,amu,pare,rv,rv_ph,rv_sp,rv_fc,ccf_ph_tot,ccf_ph,ccf_sp,ccf_fc,fluxph,flpk,flsk,N,use_phoenix_mu,LD_law,LD1,LD2,spot_map,ref_time,Prot,diff_rot,Revo,Q,inc,vsini,CB,temp_ph,temp_fc,simulate_planet,esinw,ecosw,T0p,Pp,Rpl,b,a,alp):
-
-    ######################## ROTATE PHOTSPHERE FOR EACH TIME ################################
-
-    ccf=ccf_ph_tot*np.ones((len(obs_times),len(ccf_ph_tot))) #initialize total flux at each timestamp
-    filling_sp=0.0+np.zeros(len(obs_times))
-    filling_ph=m.pi+np.zeros(len(obs_times))
-    filling_pl=0.0+np.zeros(len(obs_times))
-    filling_fc=0.0+np.zeros(len(obs_times))
-
-    for k,t in enumerate(obs_times):
-        
-        if simulate_planet:        
-            planet_pos=compute_planet_pos(t,esinw,ecosw,T0p,Pp,Rpl,b,a,alp)#compute the planet position at current time. In polar coordinates!! 
-        else:
-            planet_pos = np.array([2.0,0.0,0.0],dtype=np.float64)
-
-        if spot_map.size==0:
-            spot_pos=np.expand_dims(np.array([m.pi/2,-m.pi,0.0,0.0]),axis=0)
-        else:
-            spot_pos=compute_spot_position(t,spot_map,ref_time,Prot,diff_rot,Revo,Q) #Q or Q[i]??? #compute the position of all spots at the current time. Returns theta and phi of each spot.      
-
-        #convert latitude/longitude of spot centre to XYZ
-        vec_spot=np.zeros((len(spot_map),3))
-        for i in range(len(spot_map)):
-            xspot = m.cos(inc)*m.sin(spot_pos[i,0])*m.cos(spot_pos[i,1])+m.sin(inc)*m.cos(spot_pos[i,0])
-            yspot = m.sin(spot_pos[i,0])*m.sin(spot_pos[i,1])
-            zspot = m.cos(spot_pos[i,0])*m.cos(inc)-m.sin(inc)*m.sin(spot_pos[i,0])*m.cos(spot_pos[i,1])
-            vec_spot[i,:]=np.array([xspot,yspot,zspot]).T #spot center in cartesian
-
-
-        #Loop for each spot.
-        for i in range(len(vec_spot)):
-            
-            if spot_pos[i][2]==0.0: #if radius is 0, go to next spot
-                continue
-
-            dist=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-
-            if (dist-spot_pos[i,2]*np.sqrt(1.0+Q[i])) > (m.pi/2): #spot & facula not visible. Jump to next spot.
-                continue
-            
-            beta=np.pi/2-dist #angle of te spot with the edge of the star
-            alpha=spot_pos[i,2] #angle of the radii of the spot
-            
-            ############ FACULA PROJECTED AREA ##################
-            if Q[i]>0.0: #facula
-                alphaf=spot_pos[i,2]*m.sqrt(1.0+Q[i]) #angle of the radii of the faculae
-                #CASE 1: FACULA OUTSIDE OUTSIDE-> NULL, ALREADY EVALUATED BEFORE
-                
-                #CASE 2: ALL FACULAE INSIDE -> ELLIPSE 
-                if 0.0 < alphaf <= beta:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-
-                    Ape=ax*ay*m.pi/4.0
-                    pare_fac =  2.0*2.0*Ape #area of ellipse (projected area of spot)
-                    amu_fac=m.cos(dist)
-                    rvel_fac=vsini*m.sin(spot_pos[i,0])*m.sin(spot_pos[i,1])
-
-                #CASE 3: MOST OF THE FACULA INSIDE -> ELLIPSE + LUNE
-                elif 0.0 <= beta < alphaf:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-                                    
-                    yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)   
-
-                    ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                    Ape=ax*ay*m.pi/4.0 #y=ay
-                    Apep= ax*ay*0.5*((ylay)*m.sqrt(1.0-(ylay)**2)+m.asin((ylay)))# y''=yl
-                    Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alphaf)*m.cos(beta)
-
-                    pare_fac = 2.0*(2.0*Ape + Apcp - Apep) #proj. area is described in Urena et al. Stratified Sampling of Projected Spherical Caps
-                    amu_fac=m.sin((beta+alphaf)/2.0) #representative mu as the mean point between edge of spot and of star
-                    #position in polar:
-                    r_fac=m.cos((beta+alphaf)/2.0)
-                    t_fac=m.atan2(vec_spot[i,2],vec_spot[i,1])
-                    #in spherical
-                    x_fac=amu_fac
-                    y_fac=r_fac*m.cos(t_fac)
-                    z_fac=r_fac*m.sin(t_fac)
-                    #in star coords
-                    colat_fac, lon_fac = m.acos(z_fac*m.cos(-inc)-x_fac*m.sin(-inc)), m.atan2(y_fac,x_fac*m.cos(-inc)+z_fac*m.sin(-inc))
-                    #rvel of spot
-                    rvel_fac=vsini*m.sin(colat_fac)*m.sin(lon_fac)
-                #CASE 4: MOST OF THE FACULA OUTSIDE-> LUNE
-                elif 0.0 < (-beta) < alphaf:
-                    ay=m.sin(alphaf) #semiminor axis ellipse
-                    ax=ay*m.sin(beta) #semimajor axis ellipse
-                                    
-                    yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)  #intesection x and y between ellipse and lune 
-
-                    ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                    Apep= ax*ay*0.5*((ylay)*m.sqrt(1-(ylay)**2)+m.asin((ylay)))# y''=yl
-                    Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alphaf)*m.cos(beta)
-
-                    pare_fac = 2.0*(Apep + Apcp) #proj. area is area of lune  
-                    amu_fac=m.sin((beta+alphaf)/2.0)
-                    #position in polar:
-                    r_fac=m.cos((beta+alphaf)/2.0)
-                    t_fac=m.atan2(vec_spot[i,2],vec_spot[i,1])
-                    #in spherical
-                    x_fac=amu_fac
-                    y_fac=r_fac*m.cos(t_fac)
-                    z_fac=r_fac*m.sin(t_fac)
-                    #in star coords
-                    colat_fac, lon_fac = m.acos(z_fac*m.cos(-inc)-x_fac*m.sin(-inc)), m.atan2(y_fac,x_fac*m.cos(-inc)+z_fac*m.sin(-inc))
-                    #rvel of spot
-                    rvel_fac=vsini*m.sin(colat_fac)*m.sin(lon_fac)
-
-            ######### SPOT PROJECTED AREA ############
-            #CASE 1: SPOT OUTSIDE-> NULL
-            if 0.0 <= alpha <= (-beta):
-                pare_spot=0.0
-                amu_spot=0.0
-            
-            #CASE 2: ALL SPOT INSIDE -> ELLIPSE 
-            elif 0.0 < alpha <= beta:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-
-                Ape=ax*ay*m.pi/4.0
-                pare_spot =  2.0*2.0*Ape #area of ellipse (projected area of spot)
-                amu_spot=m.cos(dist)
-                rvel_spot=vsini*m.sin(spot_pos[i,0])*m.sin(spot_pos[i,1])
-
-            #CASE 3: MOST OF THE SPOT INSIDE -> ELLIPSE + LUNE
-            elif 0.0 <= beta < alpha:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-                                
-                yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)   
-
-                ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                Ape=ax*ay*m.pi/4.0 #y=ay
-                Apep= ax*ay*0.5*((ylay)*m.sqrt(1.0-(ylay)**2)+m.asin((ylay)))# y''=yl
-                Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alpha)*m.cos(beta)
-
-                pare_spot = 2.0*(2.0*Ape + Apcp - Apep) #proj. area is described in Urena et al. Stratified Sampling of Projected Spherical Caps
-                amu_spot=m.sin((beta+alpha)/2.0) #representative mu as the mean point between edge of spot and of star
-
-                #position in polar:
-                r_spot=m.cos((beta+alpha)/2.0)
-                t_spot=m.atan2(vec_spot[i,2],vec_spot[i,1])
-                #in spherical
-                x_spot=amu_spot
-                y_spot=r_spot*m.cos(t_spot)
-                z_spot=r_spot*m.sin(t_spot)
-                #in star coords
-                colat_spot, lon_spot = m.acos(z_spot*m.cos(-inc)-x_spot*m.sin(-inc)), m.atan2(y_spot,x_spot*m.cos(-inc)+z_spot*m.sin(-inc))
-                #rvel of spot
-                rvel_spot=vsini*m.sin(colat_spot)*m.sin(lon_spot)
-            #CASE 4: MOST OF THE SPOT OUTSIDE-> LUNE
-            elif 0.0 < (-beta) < alpha:
-                ay=m.sin(alpha) #semiminor axis ellipse
-                ax=ay*m.sin(beta) #semimajor axis ellipse
-                                
-                yl=m.sqrt(1.0-(1.0-ay**2)/m.cos(beta)**2)  #intesection x and y between ellipse and lune 
-
-                ylay=min(1.0,max(yl/ay,-1.0)) #yl/ay, to avoid getting values >1 and errors in asin, due to floating points
-
-                Apep= ax*ay*0.5*((ylay)*m.sqrt(1-(ylay)**2)+m.asin((ylay)))# y''=yl
-                Apcp= 0.5*(yl*m.sqrt(1.0-yl**2)+m.asin(yl)) - yl*m.cos(alpha)*m.cos(beta)
-
-                pare_spot = 2.0*(Apep + Apcp) #proj. area is area of lune  
-                amu_spot=m.sin((beta+alpha)/2.0)
-                #position in polar:
-                r_spot=m.cos((beta+alpha)/2.0)
-                t_spot=m.atan2(vec_spot[i,2],vec_spot[i,1])
-                #in spherical
-                x_spot=amu_spot
-                y_spot=r_spot*m.cos(t_spot)
-                z_spot=r_spot*m.sin(t_spot)
-                #in star coords
-                colat_spot, lon_spot = m.acos(z_spot*m.cos(-inc)-x_spot*m.sin(-inc)), m.atan2(y_spot,x_spot*m.cos(-inc)+z_spot*m.sin(-inc))
-                #rvel of spot
-                rvel_spot=vsini*m.sin(colat_spot)*m.sin(lon_spot)       
-
-
-            #Compute CCF ofspot an ph at amu
-            if use_phoenix_mu:
-                
-                idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_spot*0.999999999,side='right') #acd is sorted inversely
-                idx_low=idx_upp+1
-                dlp = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(amu_spot-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                dls = flsk[idx_low]+(flsk[idx_upp]-flsk[idx_low])*(amu_spot-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening
-
-            else: #or use a specified limb darkening law
-                ld=limb_darkening_law(LD_law,LD1,LD2,amu_spot)
-                dlp = flpk[0]*ld
-                dls = flsk[0]*ld
-
-
-            flux_phsp=np.sum(dlp*pare_spot/(4*np.pi)) #flux of the photosphere occuppied by the spot.
-            flux_spph=np.sum(dls*pare_spot/(4*np.pi)) #flux of the spot
-
-
-            rv_phsp = rv_ph + rvel_spot + fun_cifist(ccf_ph,amu_spot)*1000.0*CB
-            rv_spph = rv_sp + rvel_spot + fun_spot_bisect(ccf_sp)*1000.0*CB
-            ccf_phsp=interpolation_nb(rv,rv_phsp,ccf_ph,ccf_ph[0],ccf_ph[-1]) #still normalized ccf.
-            ccf_spph=interpolation_nb(rv,rv_spph,ccf_sp,ccf_sp[0],ccf_sp[-1]) #still normalized ccf.
-            #Compute RVshift, shift CCF, and iterpolate the CCF values. 
-            CCF_phsp = ccf_phsp*flux_phsp/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-            CCF_spph = ccf_spph*flux_spph/fluxph
-
-            if Q[i]>0.0:
-
-                pare_facula= pare_fac - pare_spot
-
-                if use_phoenix_mu:                   
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_fac*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flsk[idx_low]+(flsk[idx_upp]-flsk[idx_low])*(amu_fac-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_fac)
-                    dlp = flsk[0]*ld
-
-                flux_phfc=np.sum(dlp*pare_fac/(4*np.pi)) #flux of the photosphere occuppied by the spot.
-
-                dtfmu=250.9-407.4*amu_fac+190.9*amu_fac**2 #(T_fac-T_ph) multiplied by a factor depending on the 
-                flux_fcph=np.sum(dlp*pare_fac/(4*np.pi))*((temp_ph+dtfmu)/(temp_fc))**4 #flux of the spot
-
-                #Compute RVshift, shift CCF, and iterpolate the CCF values.                
-                rv_phfc = rv_ph + rvel_fac + fun_cifist(ccf_ph,amu_fac)*1000.0*CB
-                rv_fcph = rv_fc + rvel_fac + fun_spot_bisect(ccf_fc)*amu_fac*1000.0*CB
-                ccf_phfc=interpolation_nb(rv,rv_phfc,ccf_ph,ccf_ph[0],ccf_ph[-1]) #still normalized ccf.
-                ccf_fcph=interpolation_nb(rv,rv_fcph,ccf_fc,ccf_fc[0],ccf_fc[-1]) #still normalized ccf.
-                #Compute RVshift, shift CCF, and iterpolate the CCF values. 
-                CCF_phfc = ccf_phfc*flux_phfc/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-                CCF_fcph = ccf_fcph*flux_fcph/fluxph
-
-            else:
-                CCF_phfc = ccf_ph*0.0 #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-                CCF_fcph = ccf_fc*0.0  
-                pare_facula = 0.0
-
-
-            ccf[k] = ccf[k] - CCF_phsp + CCF_spph - CCF_phfc + CCF_fcph #total CCF - photosphere_spot + spot - photosphere_fac + facula
-            filling_sp[k] = filling_sp[k] + pare_spot
-            filling_ph[k] = filling_ph[k] - pare_spot - pare_facula
-            filling_fc[k] = filling_fc[k] + pare_facula
-        
-
-
-        ################### PLANETARY TRANSIT PROJECTED AREA ########################
-
-        if simulate_planet:
-            if planet_pos[0]-planet_pos[2]>= 1.0: #all planet outside
-                pare_pl = 0.0
-                amu_pl = 0.0
-                block = 'none'
-
-            elif planet_pos[0]+planet_pos[2] <= 1.0: #all planet inside
-                pare_pl = m.pi*planet_pos[2]**2 #area of a circle
-                amu_pl = m.sqrt(1-planet_pos[0]**2) #cos(mu)**2=1-sin(mu)**2=1-r**2
-                
-                x_pl=amu_pl
-                y_pl=planet_pos[0]*m.cos(planet_pos[1])
-                z_pl=planet_pos[0]*m.sin(planet_pos[1])
-                #in star coords
-                colat_pl, lon_pl = m.acos(z_pl*m.cos(-inc)-x_pl*m.sin(-inc)), m.atan2(y_pl,x_pl*m.cos(-inc)+z_pl*m.sin(-inc))
-                #rvel of spot
-                rvel_pl=vsini*m.sin(colat_pl)*m.sin(lon_pl)     
-
-
-                block='ph'
-                for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
-                    distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
-                        block='ph'
-                        continue 
-
-                    dist=m.acos(np.dot(np.array([m.cos(m.asin(planet_pos[0])),planet_pos[0]*m.cos(planet_pos[1]),planet_pos[0]*m.sin(planet_pos[1])]),vec_spot[i])) #spot-planet centers distance
-                    
-                    if dist < spot_pos[i,2]: #if the distance is lower than spot radius, most of the planet is inside the spot
-                        if (distsp-spot_pos[i,2]) >= (m.pi/2): #if spot is not visible
-                            block='ph'
-                        else:
-                            block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
-                            block = 'fc'
-                    elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
-                        block = 'ph' #else, the planet is blocking photosphere
-
-            else: #the planet is partially covering the star.                
-                d1=(1-planet_pos[2]**2+planet_pos[0]**2)/(2*planet_pos[0]) #dist from star centre to  intersection point
-                d2=planet_pos[0]-d1 #dist from centre of planet to centre of intersection
-                dedge = 1-(1+planet_pos[2]-planet_pos[0])/2 #dist from centre star to centre intersection
-                pare_pl = m.acos(d1) - d1*m.sqrt(1-d1**2) + planet_pos[2]**2*m.acos(d2/planet_pos[2]) - d2*m.sqrt(planet_pos[2]**2-d2**2) #area of intersection star-planet
-                amu_pl = m.sqrt(1-(dedge)**2) #amu is represented by the mean point of the intersection.
-                #spherical coords of planet and corresponding RV of the surface
-                x_pl=amu_pl
-                y_pl=dedge*m.cos(planet_pos[1])
-                z_pl=dedge*m.sin(planet_pos[1])
-                #in star coords
-                colat_pl, lon_pl = m.acos(z_pl*m.cos(-inc)-x_pl*m.sin(-inc)), m.atan2(y_pl,x_pl*m.cos(-inc)+z_pl*m.sin(-inc))
-                #rvel of surface
-                rvel_pl=vsini*m.sin(colat_pl)*m.sin(lon_pl)     
-
-    
-                block='ph'
-                for i in range(len(vec_spot)): #check if planet is over a spot or photosphere or faculae
-                    distsp=m.acos(np.dot(vec_spot[i],np.array([1.,0.,0.]))) #Angle center spot to center of star. 
-                    if (distsp-spot_pos[i,2]*np.sqrt(1.0+Q[i])) >= (m.pi/2): #spot & facula not visible. Jump to next spot.
-                        block='ph'
-                        continue 
-
-                    dist=m.acos(np.dot(np.array([m.cos(m.asin(dedge)),dedge*m.cos(planet_pos[1]),dedge*m.sin(planet_pos[1])]),vec_spot[i])) #distance from spot to centre of planet-star intersection
-
-                    if dist < spot_pos[i,2]: #if the distance is lower than spot radius, most of the planet is inside the spot
-                        if (distsp-spot_pos[i,2]) > (m.pi/2): #if spot is not visible
-                            block='ph'
-                        else:
-                            block = 'sp'
-                    elif dist < spot_pos[i,2]*m.sqrt(1+Q[i]): #if the distance is lower than facula radius, most of the planet is inside the facula
-                        block = 'fc'
-                    elif (block != 'sp') and (block != 'fc'): #if the planet is not blocking a spot or a facula, then its blocking ph
-                        block = 'ph' #else, the planet is blocking photosphere
-
-
-            #compute and subtract flux blocked by the planet
-            if block == 'ph': 
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dlp = flpk[0]*ld
-
-                flux_phpl=np.sum(dlp*pare_pl/(4*np.pi)) #flux of the photosphere occuppied by the planet.
-
-                rv_phpl = rv_ph + rvel_pl + fun_cifist(ccf_ph,amu_pl)*1000.0*CB
-                ccf_phpl=interpolation_nb(rv,rv_phpl,ccf_ph,ccf_ph[0],ccf_ph[-1]) #still normalized ccf.
-                #Compute RVshift, shift CCF, and iterpolate the CCF values. 
-                CCF_phpl = ccf_phpl*flux_phpl/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-
-
-                ccf[k] = ccf[k] - CCF_phpl #total flux - flux blocked
-                filling_ph[k] = filling_ph[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-
-            if block == 'sp': #flux blocked by the planet
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dls = flsk[idx_low]+(flsk[idx_upp]-flsk[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dls = flsk[0]*ld
-
-                flux_sppl=np.sum(dls*pare_pl/(4*np.pi)) #flux of the photosphere occuppied by the planet.
-
-                rv_sppl = rv_sp + rvel_pl
-                ccf_sppl=interpolation_nb(rv,rv_sppl,ccf_sp,ccf_sp[0],ccf_sp[-1]) #still normalized ccf.
-                #Compute RVshift, shift CCF, and iterpolate the CCF values. 
-                CCF_sppl = ccf_sppl*flux_sppl/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-
-
-                ccf[k] = ccf[k] - CCF_sppl #total flux - flux blocked
-                filling_sp[k] = filling_sp[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-            if block == 'fc': #flux blocked by the spot
-                if use_phoenix_mu:
-                    idx_upp=len(acd)-1-np.searchsorted(np.flip(acd),amu_pl*0.999999999,side='right') #acd is sorted inversely
-                    idx_low=idx_upp+1
-                    dlp = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(amu_pl-acd[idx_low])/(acd[idx_upp]-acd[idx_low]) #limb darkening #limb darkening
-                else: #or use a specified limb darkening law
-                    ld=limb_darkening_law(LD_law,LD1,LD2,amu_pl)
-                    dlp = flpk[0]*ld
-
-                dtfmu=250.9-407.4*amu_pl+190.9*amu_pl**2 #(T_fac-T_ph) multiplied by a factor depending on the 
-                flux_fcpl=np.sum(dlp*pare_pl/(4*np.pi))*((temp_ph+dtfmu)/(temp_fc))**4 #flux of the facula occuppied by the planet.
-                
-                rv_fcpl = rv_fc + rvel_pl
-                ccf_fcpl=interpolation_nb(rv,rv_fcpl,ccf_fc,ccf_fc[0],ccf_fc[-1]) #still normalized ccf.
-                #Compute RVshift, shift CCF, and iterpolate the CCF values. 
-                CCF_fcpl = ccf_fcpl*flux_fcpl/fluxph #the ccf of the element photosphere is the CCF weighted by the flux of the element over all the flux.
-
-                ccf[k] = ccf[k] - CCF_fcpl #total ccf - ccf blocked
-                filling_fc[k] = filling_fc[k] - pare_pl
-                filling_pl[k] = filling_pl[k] + pare_pl
-
-
-        filling_ph[k]=100*filling_ph[k]/m.pi
-        filling_sp[k]=100*filling_sp[k]/m.pi
-        filling_fc[k]=100*filling_fc[k]/m.pi
-        filling_pl[k]=100*filling_pl[k]/m.pi    
-    
-    return obs_times, ccf, filling_ph, filling_sp, filling_fc, filling_pl
-
 
 
 
 
 
 @nb.njit(cache=True,error_model='numpy') 
-def check_spot_overlap(spot_map,Q): 
+def check_spot_overlap(spot_map,Q): #TODO
 #False if there is no overlap between spots
     N_spots=len(spot_map)
     for i in range(N_spots):
@@ -1774,6 +1353,8 @@ def check_spot_overlap(spot_map,Q):
 #           SPECTROPHOTOMETRY FUNCTIONS ('spec', OSCAR - under development)            #
 ########################################################################################
 ########################################################################################
+
+#TODO
 
 #spec[k,:],typ, filling_ph[k], filling_sp[k], filling_fc[k], filling_pl[k] = nbspectra.loop_generate_rotating_spec_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spot,simulate_planet,planet_pos,spec_rings_ph,spec_rings_sp,spec_rings_fc,spec_ph,vis)
 @nb.njit(cache=True,error_model='numpy')
