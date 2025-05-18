@@ -44,6 +44,7 @@ class StarSim(object):
             self.n_grid_rings = int(self.conf_file.get('general','n_grid_rings'))
             self.phoenix_spectra = int(self.conf_file.get('general','phoenix_spectra'))
             self.mps_spectra_folder = str(self.conf_file.get('general','mps_spectra_folder'))
+            self.mps_mu_grid = int(self.conf_file.get('general','mps_mu_grid'))
             #star
             self.radius = float(self.conf_file.get('star','radius')) #Radius of the star in solar radii
             self.mass = float(self.conf_file.get('star','mass')) #Mass of the star in solar radii
@@ -205,12 +206,13 @@ class StarSim(object):
                 pathmask = self.path / 'masks' / self.ccf_mask
                 try:
                     d = np.loadtxt(pathmask,unpack=True)
+                    print(len(d))
                     if len(d) == 2:
                         self.wvm = d[0]
                         self.fm = d[1]
                     elif len(d) == 3:
-                        self.wvm = spectra.air2vacuum((d[0]+d[1])/2) #HARPS mask ar in air, not vacuum
-                        self.fm = d[2]
+                        self.wvm = np.atleast_1d(spectra.air2vacuum((d[0]+d[1])/2)) #HARPS mask ar in air, not vacuum
+                        self.fm = np.atleast_1d(d[2])
                     else:
                         sys.exit('Mask format not valid. Must have two (wv and weight) or three columns (wv1 wv2 weight).')
 
@@ -382,6 +384,7 @@ class StarSim(object):
                 rv_fc = rv_ph
                 fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
                 rv_fc = rv - fun_raw_xbisc(ccf_fc)
+                
 
                 if self.simulation_mode == 'grid':
 
@@ -424,6 +427,11 @@ class StarSim(object):
                 self.results['raw_ybis'] = ccf_params[5]
                 self.results['pos'] = vec_pos
                 self.results['rv0'] = RV0
+                
+                
+
+
+
 
 
 
@@ -478,7 +486,7 @@ class StarSim(object):
                 if self.simulation_mode == 'grid':
                     brigh_grid_ph, flx_ph = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp_lc,f_filt,wvp_lc,'ph') #returns spectrum of grid in ring N, its brightness, and the total flux
                     brigh_grid_sp, flx_sp = spectra.compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flns_lc,f_filt,wvp_lc,'sp') #returns spectrum of grid in ring N, its brightness, and the total flux
-                    brigh_grid_fc, flx_fc = brigh_grid_sp, flx_sp #if there are no faculae
+                    brigh_grid_fc, flx_fc = brigh_grid_sp, flx_ph #if there are no faculae
                     if np.sum(self.active_region_types)>0:
                         brigh_grid_fc, flx_fc = spectra.compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flfc_lc,f_filt,wvp_lc) #returns spectrum of grid in ring N, its brightness, and the total flux
                     t,FLUX_n,FLUX, ff_ph,ff_sp,ff_fc,ff_pl,typ=spectra.generate_rotating_photosphere_lc(self,Ngrid_in_ring,pare,amu,brigh_grid_ph,brigh_grid_sp,brigh_grid_fc,flx_ph,vec_grid,inversion,plot_map=self.plot_grid_map)
@@ -570,6 +578,21 @@ class StarSim(object):
                     acd, wv_rv_LR, flpk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
                     acd, wv_rv_LR, flsk_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
                     #acd, wv_rv_LR, flfc_rv =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_facula,self.logg)
+                    if self.mps_mu_grid:
+                        acd_n = []
+                        wv_rv_LR_n = []
+                        flpk_rv_n = []
+
+                        for mu_t in np.linspace(0.1,1,10):
+                            idx = np.argmin(np.abs(acd-mu_t))
+                            acd_n.append(acd[idx])
+                            wv_rv_LR_n.append(wv_rv_LR[idx])
+                            flpk_rv_n.append(flpk_rv[idx])
+                        acd = np.array(acd_n)
+                        wv_rv_LR = np.array(wv_rv_LR)
+                        flpk_rv = np.array(flpk_rv)
+
+
                 else:
                     wv_rv, flnp_rv, flp_rv =spectra.interpolate_mps(self, 'ph') #returns norm spectra and no normalized, interpolated at T and logg
                     # spot's spectra not available
@@ -608,13 +631,22 @@ class StarSim(object):
 
                 #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
                 fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
-                rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
                 fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
-                rv_sp = rv - fun_bis_sp(ccf_sp)
-                rv_fc = rv_ph
-                if np.sum(self.active_region_types)>0:            
-                    fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                    rv_fc = rv - fun_raw_xbisc(ccf_fc)
+                if np.sum(self.active_region_types)>0:          
+                        fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)  
+                if self.phoenix_spectra:
+                    rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
+                    rv_sp = rv - fun_bis_sp(ccf_sp)
+                    rv_fc = rv_ph
+                    if np.sum(self.active_region_types)>0:          
+                        rv_fc = rv - fun_raw_xbisc(ccf_fc)
+                else:
+                    rv_ph = rv #subtract the bisector from the CCF.
+                    rv_sp = rv 
+                    rv_fc = rv_ph
+
+                    
+
 
                 if self.simulation_mode == 'grid':
 
@@ -659,9 +691,6 @@ class StarSim(object):
                 self.results['raw_xbis'] = ccf_params[4]
                 self.results['raw_ybis'] = ccf_params[5]
                 self.results['pos'] = vec_pos
-                self.results['rv0'] = RV0
-                
-
 
                 
 
