@@ -157,19 +157,19 @@ def interpolate_Phoenix_mu_lc(self,temp,grav):
 
 def load_MPS_ATLAS_spectra_lc(self, type='ph'):
     if type == 'ph':
-        data = np.load(self.mps_spectra_folder+'av_solar_ssd_200G_10_mu_angles_PHOENIX_low_res_specint_grid.npy', allow_pickle=True).item()
+        data = np.load(self.mps_spectra_folder+'av_solar_ssd_200G_10_mu_angles_PHOENIX_low_res_specint_grid_cleaned.npy', allow_pickle=True).item()
     elif type == 'fc':
-        data = np.load(self.mps_spectra_folder+'av_solar_faculae_200G_10_mu_angles_PHOENIX_low_res_specint_grid.npy', allow_pickle=True).item()
+        data = np.load(self.mps_spectra_folder+'av_solar_faculae_200G_10_mu_angles_PHOENIX_low_res_specint_grid_cleaned.npy', allow_pickle=True).item()
     
     acd = np.fromiter(data.keys(), dtype=float)
-    wvp = data[str(acd[0])]['wav']
+    wvp = data[str(acd[0])]['wav'] 
 
     idx_wv=np.array(wvp>self.wavelength_lower_limit) & np.array(wvp<self.wavelength_upper_limit)
 
 
     flux = []
     for acd_i in acd:
-        flux.append(np.array(data[str(acd_i)]['intensity']  / ( 1e-8 * data['1.0']['wav'])**2 * 2.99792458e10)[idx_wv])
+        flux.append(np.array(data[str(acd_i)]['intensity']  / ( 1e-8 * data[str(acd_i)]['wav'])**2 * 2.99792458e10)[idx_wv])
 
     return acd, wvp[idx_wv], flux
 
@@ -240,15 +240,27 @@ def compute_immaculate_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv,active_
 
         #Interpolate Phoenix intensity models to correct projected ange:
         if self.use_phoenix_limb_darkening:
-            if amu[i] > np.min(acd):
+            if amu[i] > self.limb_lim:
                 acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
                 acd_upp=np.min(acd[acd>=amu[i]])
                 idx_low=np.where(acd==acd_low)[0][0]
                 idx_upp=np.where(acd==acd_upp)[0][0]
                 dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
             else:
-                dlp = flnp[-1]
-            
+                if self.limb_extrapolation == 'constant':
+                    print('Limb extrapolation: constant for mu < ', self.limb_lim)
+                    dlp = flnp[-1]
+                elif self.limb_extrapolation == 'linear':
+                    print('Limb extrapolation: linear for mu < ', self.limb_lim)
+                    if self.limb_lim == acd.min():
+                        dlp = amu[i] / self.limb_lim * flnp[-1]
+                    else:
+                        acd_low=np.max(acd[acd<self.limb_lim]) #angles above and below the proj. angle of the grid
+                        acd_upp=np.min(acd[acd>=self.limb_lim])
+                        idx_low=np.where(acd==acd_low)[0][0]
+                        idx_upp=np.where(acd==acd_upp)[0][0]
+                        dlp_lim = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(self.limb_lim-acd_low)/(acd_upp-acd_low) #limb darkening
+                        dlp = amu[i] / self.limb_lim * dlp_lim
             
             if self.return_Imu==1 and active_region_type=='ph':
                 os.makedirs(os.path.dirname('Imu_curves/Imu_dlp_{}.pickle'.format(i)), exist_ok=True) #Check if directory exists, if not then create it
@@ -306,17 +318,27 @@ def compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv)
 
         # #Interpolate Phoenix intensity models to correct projected ange:
         if self.use_phoenix_limb_darkening:
-            if amu[i] > np.min(acd):
+            if amu[i] > self.limb_lim:
                 acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
                 acd_upp=np.min(acd[acd>=amu[i]])
                 idx_low=np.where(acd==acd_low)[0][0]
                 idx_upp=np.where(acd==acd_upp)[0][0]
                 dlp = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
             else:
-                acd_low =np.min(acd)
-                acd_upp = np.min(acd)
-                dlp = flnp[-1]
+                if self.limb_extrapolation == 'constant':
+                    print('Limb extrapolation: constant for mu < ', self.limb_lim)
+                    dlp = flnp[-1]
+                elif self.limb_extrapolation == 'linear':
+                    print('Limb extrapolation: linear for mu < ', self.limb_lim)
+                    if self.limb_lim == acd.min():
+                        dlp = amu[i] / self.limb_lim * flnp[-1]
+                    else:
+                        acd_low=np.max(acd[acd<self.limb_lim]) #angles above and below the proj. angle of the grid
+                        acd_upp=np.min(acd[acd>=self.limb_lim])
+                        idx_low=np.where(acd==acd_low)[0][0]
+                        idx_upp=np.where(acd==acd_upp)[0][0]
+                        dlp_lim = flnp[idx_low]+(flnp[idx_upp]-flnp[idx_low])*(self.limb_lim-acd_low)/(acd_upp-acd_low) #limb darkening
+                        dlp = amu[i] / self.limb_lim * dlp_lim
 
         else: #or use a specified limb darkening law
             dlp = flnp[0]*limb_darkening_law(self,amu[i])
@@ -327,7 +349,7 @@ def compute_immaculate_facula_lc(self,Ngrid_in_ring,acd,amu,pare,flnp,f_filt,wv)
         #Limb brightening
         # sflf[i]=np.sum(flf[i,:] * limb_brightening_fc_spec(self, amu[i], wv)) #brightness of onegrid in ring N. 
         if self.phoenix_spectra: 
-            sflf[i]=np.sum(flf[i,:])*limb_brightening_bol(self, amu[i])#brightness of onegrid in ring N.  
+            sflf[i]=np.sum(flf[i,:]) *limb_brightening_bol(self, amu[i])#brightness of onegrid in ring N.  
         else:
             sflf[i]=np.sum(flf[i,:])
         flxfc=flxfc+sflf[i]*Ngrid_in_ring[i]  #total BRIGHTNESS of the immaculate photosphere
@@ -440,7 +462,7 @@ def generate_rotating_photosphere_lc_sdo(self,Ngrid_in_ring,pare,rs,bph,bsp,bfc,
             sys.stdout.write("\rDate {0}. ff_ph={1:.3f}%. ff_sp={2:.3f}%. ff_fc={3:.3f}%. ff_pl={4:.3f}%. [{5}/{6}]%".format(self.obs_times[k],filling_ph[k],filling_sp[k],filling_fc[k],filling_pl[k],k+1,len(self.obs_times)))
 
 
-    return flux/flxph, filling_ph, filling_sp, filling_fc, filling_pl, typ
+    return flux, filling_ph, filling_sp, filling_fc, filling_pl, typ
 
 
 
@@ -1009,11 +1031,11 @@ def interpolate_Phoenix(self,temp,grav,plot=False):
 def interpolate_mps(self, type='ph'):
 
     if type == 'ph':
-        data = np.load(self.mps_spectra_folder+'av_solar_ssd_200G_10_mu_angles_PHOENIX_high_res_grid.npy', allow_pickle=True).item()
+        data = np.load(self.mps_spectra_folder+'av_solar_ssd_200G_10_mu_angles_PHOENIX_high_res_grid_cleaned.npy', allow_pickle=True).item()
     elif type == 'fc':
-        data = np.load(self.mps_spectra_folder+'av_solar_faculae_200G_10_mu_angles_PHOENIX_high_res_grid.npy', allow_pickle=True).item()
+        data = np.load(self.mps_spectra_folder+'av_solar_faculae_200G_10_mu_angles_PHOENIX_high_res_grid_cleaned.npy', allow_pickle=True).item()
     
-    wavelength = data['1.0']['wav']
+    wavelength = data['1.0']['wav'] 
 
     overhead=1.0 #Angstrom
     idx_wv=np.array(wavelength>self.wavelength_lower_limit-overhead) & np.array(wavelength<self.wavelength_upper_limit+overhead)
@@ -1024,6 +1046,8 @@ def interpolate_mps(self, type='ph'):
 
     bins=np.linspace(self.wavelength_lower_limit-overhead,self.wavelength_upper_limit+overhead,20)
     wv= wavelength[idx_wv]
+    
+
     x_bin,y_bin=nbspectra.normalize_spectra_nb(bins,np.asarray(wv,dtype=np.float64),np.asarray(flux,dtype=np.float64))
     self.results['fits_spec'] =[wv, flux, x_bin, y_bin]
 
@@ -1128,17 +1152,27 @@ def compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk,rv_ph
         #Interpolate Phoenix intensities at the corresponding mu angle. Then HR spectra at mu is HR spectra * (spectra at mu/integrated spectra)
         
         if self.use_phoenix_limb_darkening:
-            if amu[i] > np.min(acd):
+            if amu[i] > self.limb_lim:
                 acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
                 acd_upp=np.min(acd[acd>=amu[i]])
                 idx_low=np.where(acd==acd_low)[0][0]
                 idx_upp=np.where(acd==acd_upp)[0][0]
                 dlp = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
             else:
-                acd_low =np.min(acd)
-                acd_upp = np.min(acd)
-                dlp = flpk[-1]
+                if self.limb_extrapolation == 'constant':
+                    print('Limb extrapolation: constant for mu < ', self.limb_lim)
+                    dlp = flpk[-1]
+                elif self.limb_extrapolation == 'linear':
+                    print('Limb extrapolation: linear for mu < ', self.limb_lim)
+                    if self.limb_lim == acd.min():
+                        dlp = amu[i] / self.limb_lim * flpk[-1]
+                    else:
+                        acd_low=np.max(acd[acd<self.limb_lim]) #angles above and below the proj. angle of the grid
+                        acd_upp=np.min(acd[acd>=self.limb_lim])
+                        idx_low=np.where(acd==acd_low)[0][0]
+                        idx_upp=np.where(acd==acd_upp)[0][0]
+                        dlp_lim = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(self.limb_lim-acd_low)/(acd_upp-acd_low) #limb darkening
+                        dlp = amu[i] / self.limb_lim * dlp_lim
 
             sccf[i]=Ngrid_in_ring[i]*np.sum(dlp*pare[i]/(4*np.pi)) #brightness of the ring on the band. Here I multiply by the projected area pare. 
         
@@ -1189,17 +1223,27 @@ def compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk,rv_sp,rv,ccf
 
         #Interpolate Phoenix intensities at the corresponding mu angle. Then HR spectra at mu is HR spectra * (spectra at mu/integrated spectra)
         if self.use_phoenix_limb_darkening:
-            if amu[i] > np.min(acd):
+            if amu[i] > self.limb_lim:
                 acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
                 acd_upp=np.min(acd[acd>=amu[i]])
                 idx_low=np.where(acd==acd_low)[0][0]
                 idx_upp=np.where(acd==acd_upp)[0][0]
                 dls = flsk[idx_low]+(flsk[idx_upp]-flsk[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
             else:
-                acd_low =np.min(acd)
-                acd_upp = np.min(acd)
-                dls = flsk[-1]
+                if self.limb_extrapolation == 'constant':
+                    print('Limb extrapolation: constant for mu < ', self.limb_lim)
+                    dls = flsk[-1]
+                elif self.limb_extrapolation == 'linear':
+                    print('Limb extrapolation: linear for mu < ', self.limb_lim)
+                    if self.limb_lim == acd.min():
+                        dls = amu[i] / self.limb_lim * flsk[-1]
+                    else:
+                        acd_low=np.max(acd[acd<self.limb_lim]) #angles above and below the proj. angle of the grid
+                        acd_upp=np.min(acd[acd>=self.limb_lim])
+                        idx_low=np.where(acd==acd_low)[0][0]
+                        idx_upp=np.where(acd==acd_upp)[0][0]
+                        dls_lim = flsk[idx_low]+(flsk[idx_upp]-flsk[idx_low])*(self.limb_lim-acd_low)/(acd_upp-acd_low) #limb darkening
+                        dls = amu[i] / self.limb_lim * dls_lim
             
             sccf[i]=Ngrid_in_ring[i]*np.sum(dls*pare[i]/(4*np.pi)) #brightness of the ring on the band. Here I multiply by the projected area pare. 
         
@@ -1218,13 +1262,11 @@ def compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk,rv_sp,rv,ccf
 
         ccf_ring[i,:]=ccf*flux_pix #CCF values normalized to the contribution to the total flux of 1 pixel of this ring
         #Fer lo dels bisectors
-    #print(' Spot: ', sccf )
     #CCF of each pixel, adding doppler and interpolating
     Ngrids=np.sum(Ngrid_in_ring)
     ccf_tot=np.zeros([Ngrids,len(rv)])
     #Compute the position of the grid projected on the sphere and its radial velocity.
     ccf_tot=nbspectra.loop_compute_immaculate_nb(N,Ngrid_in_ring,ccf_tot,rvel,rv,rvs_ring,ccf_ring)
-    self.results['limb_sp'] = dls
     return ccf_tot
 
 
@@ -1242,17 +1284,27 @@ def compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk,rv_fc,rv,c
 
         #Interpolate Phoenix intensities at the corresponding mu angle. Then HR spectra at mu is HR spectra * (spectra at mu/integrated spectra)
         if self.use_phoenix_limb_darkening:
-            if amu[i] > np.min(acd):
+            if amu[i] > self.limb_lim:
                 acd_low=np.max(acd[acd<amu[i]]) #angles above and below the proj. angle of the grid
                 acd_upp=np.min(acd[acd>=amu[i]])
                 idx_low=np.where(acd==acd_low)[0][0]
                 idx_upp=np.where(acd==acd_upp)[0][0]
                 dlp = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(amu[i]-acd_low)/(acd_upp-acd_low) #limb darkening
-        
             else:
-                acd_low =np.min(acd)
-                acd_upp = np.min(acd)
-                dlp = flpk[-1]
+                if self.limb_extrapolation == 'constant':
+                    print('Limb extrapolation: constant for mu < ', self.limb_lim)
+                    dlp = flpk[-1]
+                elif self.limb_extrapolation == 'linear':
+                    print('Limb extrapolation: linear for mu < ', self.limb_lim)
+                    if self.limb_lim == acd.min():
+                        dlp = amu[i] / self.limb_lim * flpk[-1]
+                    else:
+                        acd_low=np.max(acd[acd<self.limb_lim]) #angles above and below the proj. angle of the grid
+                        acd_upp=np.min(acd[acd>=self.limb_lim])
+                        idx_low=np.where(acd==acd_low)[0][0]
+                        idx_upp=np.where(acd==acd_upp)[0][0]
+                        dlp_lim = flpk[idx_low]+(flpk[idx_upp]-flpk[idx_low])*(self.limb_lim-acd_low)/(acd_upp-acd_low) #limb darkening
+                        dlp = amu[i] / self.limb_lim * dlp_lim
             
             sccf[i]=Ngrid_in_ring[i]*np.sum(dlp*pare[i]/(4*np.pi)) #brightness of the ring on the band. Here I multiply by the projected area pare. 
             
@@ -1269,21 +1321,16 @@ def compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk,rv_fc,rv,c
             if self.phoenix_spectra:
                 sccf[i]=sccf[i]*limb_brightening_bol(self, amu[i])
             
-        self.results['limb_fc'] = dlp
         
-        # fun_cifist = self.fun_coeff_bisectors_amu(amu[i])
 
         fun_dumusque = self.fun_coeff_bisector_faculae(amu[i])
  
         flux_pix=(sccf[i]/Ngrid_in_ring[i])/flxph #brightness of 1 pixel normalized to total flux
         
 
-        # print('CCF: ', np.min(ccf), np.max(ccf))
         rvs_ring[i,:]= rv_fc + fun_dumusque(ccf)*1000*self.convective_shift #Same as spot. 
         ccf_ring[i,:]=ccf*flux_pix #CCF values normalized to the contribution to the total flux of 1 pixel of this ring
         #Fer lo dels bisectors
-    plt.show()
-    #print('Faculae : ', sccf )
     #CCF of each pixel, adding doppler and interpolating
     Ngrids=np.sum(Ngrid_in_ring)
     ccf_tot=np.zeros([Ngrids,len(rv)])
@@ -1345,7 +1392,7 @@ def generate_rotating_photosphere_rv(self,Ngrid_in_ring,pare,amu,RV,ccf_ph_tot,c
         for i in range(len(vec_spot)):
             dist=m.acos(np.dot(vec_spot[i],np.array([1,0,0])))
             
-            if (dist-spot_pos[i,2]) <= (np.pi/2): #TOCHECK
+            if (dist-spot_pos[i,2]) <= (np.pi/2): 
                 vis[i]=1.0
         
         if (planet_pos[0]-planet_pos[2]<1):
@@ -1432,6 +1479,8 @@ def compute_ccf_params(self,rv,ccf,plot_test):
         ccf[i] = ccf[i] - ccf[i].min() + 0.000001
         #Compute bisector and remove wings
         cutleft0,cutright0,xbis,ybis=nbspectra.speed_bisector_nb(rv,ccf[i]/ccf[i].max(),integrated_bis=True) #FAST
+        # cutleft0,cutright0,xbis,ybis=nbspectra.speed_bisector_nb(rv,ccf[i],integrated_bis=True) #test
+
 
         raw_xbis.append(xbis)
         raw_ybis.append(ybis)
@@ -1555,7 +1604,7 @@ def compute_spot_position(self,t):
                 rad=Rcoef[0]+(t-tini)*(Rcoef[1]-Rcoef[0])/dur
             else:
                 rad=0.0
-        elif Revo == 'quadratic':
+        elif self.spots_evo_law == 'quadratic':
             if t>=tini and t<=tfin:
                 rad=-4*Rcoef[0]*(t-tini)*(t-tini-dur)/dur**2
             else:

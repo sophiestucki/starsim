@@ -117,6 +117,7 @@ def interpolation_nb(xp,x,y,left=0,right=0):
     return yp
 
 
+
 @nb.njit(cache=True,error_model='numpy')
 def cross_correlation_nb(rv,wv,flx,wv_ref,flx_ref):
     #Compute the CCF against the reference spectrum. Can be optimized.
@@ -132,7 +133,7 @@ def cross_correlation_nb(rv,wv,flx,wv_ref,flx_ref):
 
 
 @nb.njit(cache=True,error_model='numpy')
-def cross_correlation_mask(rv,wv,f,wvm,fm):
+def cross_correlation_mask(rv,wv,f,wvm,fm, phoenix_spectra):
     """
     Function to compute CCF against Phoenix-spectra. The steps used
     are specific to Phoenix spectra, do not use other spectra.
@@ -142,72 +143,107 @@ def cross_correlation_mask(rv,wv,f,wvm,fm):
     lenm = len(wvm)
     wvmin=wv[0]
 
-    for i in range(len(rv)):
-        wvshift=wvm*(1.0+rv[i]/2.99792458e8) #shift ref spectrum, in m/s
-        #for each mask line
-        for j in range(lenm):
-            #find wavelengths right and left of the line.
-            wvline=wvshift[j]
+    if phoenix_spectra:
 
-            if wvline<3000.0:
-                idxlf = int((wvline-wvmin)/0.1)
+        for i in range(len(rv)):
+            wvshift=wvm*(1.0+rv[i]/2.99792458e8) #shift ref spectrum, in m/s
+            #for each mask line
+            for j in range(lenm):
+                #find wavelengths right and left of the line.
+                wvline=wvshift[j]
 
-            elif wvline<4999.986:
-                if wvmin<3000.0:
-                    idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((wvline-3000.0)/0.006) 
+                if wvline<3000.0:
+                    idxlf = int((wvline-wvmin)/0.1)
+
+                elif wvline<4999.986:
+                    if wvmin<3000.0:
+                        idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((wvline-3000.0)/0.006) 
+                    else:
+                        idxlf = int((wvline-wvmin)/0.006)
+
+                elif wvline<5000.0:
+                    if wvmin<3000.0:
+                        idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1
+                    else:
+                        idxlf = int((4999.986-wvmin)/0.006) + 1
+
+                elif wvline<10000.0:
+                    if wvmin<3000.0:
+                        idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((wvline-5000.0)/0.01)
+                    elif wvmin<4999.986:
+                        idxlf = int((4999.986-wvmin)/0.006) + 1 + int((wvline-5000.0)/0.01)
+                    else:
+                        idxlf = int((wvline-wvmin)/0.01) 
+
+                elif wvline<15000.0:
+                    if wvmin<3000.0:
+                        idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((10000.0-5000.0)/0.01) + int((wvline-10000.0)/0.02)
+                    elif wvmin<4999.986:
+                        idxlf = int((4999.986-wvmin)/0.006) + 1 + int((10000-5000.0)/0.01) + int((wvline-10000.0)/0.02)
+                    elif wvmin<10000.0:
+                        idxlf = int((10000.0-wvmin)/0.01) + int((wvline-10000.0)/0.02)
+                    else:
+                        idxlf = int((wvline-wvmin)/0.02)
+
                 else:
-                    idxlf = int((wvline-wvmin)/0.006)
+                    if wvmin<3000.0:
+                        idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((10000.0-5000.0)/0.01) + int((15000.0-10000.0)/0.02) + int((wvline-15000.0)/0.03)
+                    elif wvmin<4999.986:
+                        idxlf = int((4999.986-wvmin)/0.006) + 1 + int((10000-5000.0)/0.01) + int((15000-10000.0)/0.02) + int((wvline-15000.0)/0.03)
+                    elif wvmin<10000.0:
+                        idxlf = int((10000.0-wvmin)/0.01) + int((15000-10000.0)/0.02) + int((wvline-15000.0)/0.03)
+                    elif wvmin<15000.0:
+                        idxlf = int((15000-wvmin)/0.02) + int((wvline-15000.0)/0.03)
+                    else:
+                        idxlf = int((wvline-wvmin)/0.03)
 
-            elif wvline<5000.0:
-                if wvmin<3000.0:
-                    idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1
-                else:
-                    idxlf = int((4999.986-wvmin)/0.006) + 1
+                idxrg = idxlf + 1
 
-            elif wvline<10000.0:
-                if wvmin<3000.0:
-                    idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((wvline-5000.0)/0.01)
-                elif wvmin<4999.986:
-                    idxlf = int((4999.986-wvmin)/0.006) + 1 + int((wvline-5000.0)/0.01)
-                else:
-                    idxlf = int((wvline-wvmin)/0.01) 
+                diffwv=wv[idxrg]-wv[idxlf] #pixel size in wavelength
+                midpix=(wv[idxrg]+wv[idxlf])/2 #wavelength between the two pixels
+                leftmask = wvline - diffwv/2 #left edge of the mask
+                rightmask = wvline + diffwv/2 #right edge of the mask
+                frac1 = (midpix - leftmask)/diffwv #fraction of the mask ovelapping the left pixel
+                frac2 = (rightmask - midpix)/diffwv #fraction of the mask overlapping the right pixel
+                midleft = (leftmask + midpix)/2 #central left overlapp
+                midright = (rightmask + midpix)/2 #central wv right overlap
+                f1 = f[idxlf] + (midleft-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
+                f2 = f[idxlf] + (midright-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
 
-            elif wvline<15000.0:
-                if wvmin<3000.0:
-                    idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((10000.0-5000.0)/0.01) + int((wvline-10000.0)/0.02)
-                elif wvmin<4999.986:
-                    idxlf = int((4999.986-wvmin)/0.006) + 1 + int((10000-5000.0)/0.01) + int((wvline-10000.0)/0.02)
-                elif wvmin<10000.0:
-                    idxlf = int((10000.0-wvmin)/0.01) + int((wvline-10000.0)/0.02)
-                else:
-                    idxlf = int((wvline-wvmin)/0.02)
+                ccf[i]=ccf[i] - f1*fm[j]*frac1 - f2*fm[j]*frac2
 
-            else:
-                if wvmin<3000.0:
-                    idxlf = np.round(int((3000.0-wvmin)/0.1)) + int((4999.986-3000.0)/0.006) + 1 + int((10000.0-5000.0)/0.01) + int((15000.0-10000.0)/0.02) + int((wvline-15000.0)/0.03)
-                elif wvmin<4999.986:
-                    idxlf = int((4999.986-wvmin)/0.006) + 1 + int((10000-5000.0)/0.01) + int((15000-10000.0)/0.02) + int((wvline-15000.0)/0.03)
-                elif wvmin<10000.0:
-                    idxlf = int((10000.0-wvmin)/0.01) + int((15000-10000.0)/0.02) + int((wvline-15000.0)/0.03)
-                elif wvmin<15000.0:
-                    idxlf = int((15000-wvmin)/0.02) + int((wvline-15000.0)/0.03)
-                else:
-                    idxlf = int((wvline-wvmin)/0.03)
 
-            idxrg = idxlf + 1
+    else:
+        print('ELSE')
+        for i in range(len(rv)):
+            wvshift=wvm*(1.0+rv[i]/2.99792458e8) #shift ref spectrum, in m/s
+            #for each mask line
+            for j in range(lenm):
+                wvline=wvshift[j]
 
-            diffwv=wv[idxrg]-wv[idxlf] #pixel size in wavelength
-            midpix=(wv[idxrg]+wv[idxlf])/2 #wavelength between the two pixels
-            leftmask = wvline - diffwv/2 #left edge of the mask
-            rightmask = wvline + diffwv/2 #right edge of the mask
-            frac1 = (midpix - leftmask)/diffwv #fraction of the mask ovelapping the left pixel
-            frac2 = (rightmask - midpix)/diffwv #fraction of the mask overlapping the right pixel
-            midleft = (leftmask + midpix)/2 #central left overlapp
-            midright = (rightmask + midpix)/2 #central wv right overlap
-            f1 = f[idxlf] + (midleft-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
-            f2 = f[idxlf] + (midright-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
+                dist = wvline - wvmin
+                k = 0
 
-            ccf[i]=ccf[i] - f1*fm[j]*frac1 - f2*fm[j]*frac2
+                while dist >= 0.0:
+                    k += 1
+                    dist = wvline - wv[k]
+
+                idxlf = int(k-1)
+
+                idxrg = idxlf + 1
+
+                diffwv=wv[idxrg]-wv[idxlf] #pixel size in wavelength
+                midpix=(wv[idxrg]+wv[idxlf])/2 #wavelength between the two pixels
+                leftmask = wvline - diffwv/2 #left edge of the mask
+                rightmask = wvline + diffwv/2 #right edge of the mask
+                frac1 = (midpix - leftmask)/diffwv #fraction of the mask ovelapping the left pixel
+                frac2 = (rightmask - midpix)/diffwv #fraction of the mask overlapping the right pixel
+                midleft = (leftmask + midpix)/2 #central left overlapp
+                midright = (rightmask + midpix)/2 #central wv right overlap
+                f1 = f[idxlf] + (midleft-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
+                f2 = f[idxlf] + (midright-wv[idxlf])*(f[idxrg]-f[idxlf])/(diffwv)
+
+                ccf[i]=ccf[i] - f1*fm[j]*frac1 - f2*fm[j]*frac2
 
     return (ccf-np.min(ccf))/np.max((ccf-np.min(ccf)))
 
@@ -571,7 +607,7 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
                         dfc=(2*spot_pos[l][2]/width)**2              
                     else: #grid partially covered
                         dfc =-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2 
-            dfc -= dsp
+                dfc -= dsp
             afc+=dfc
 
     #PLANET
@@ -689,7 +725,7 @@ def loop_generate_rotating_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_spo
                             A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
                             Ar=4*(A1+A2)/width**2
                             dfc=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
-                    dfc -= dsp
+                        dfc -= dsp
                     afc+=dfc
 
 
@@ -1098,7 +1134,7 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
                         dfc=(2*spot_pos[l][2]/width)**2               
                     else: #grid partially covered
                         dfc =-2*spot_pos[l][2]*(dist-width/2-spot_pos[l][2])/width**2 
-            dfc -= dsp
+                dfc -= dsp
             afc+=dfc
 
     #PLANET
@@ -1218,7 +1254,7 @@ def loop_generate_rotating_lc_nb(N,Ngrid_in_ring,pare,amu,spot_pos,vec_grid,vec_
                             A2=(spot_pos[l][2]**2/2)*(m.pi/2-2*m.asin(m.sqrt(spot_pos[l][2]**2-(width/2)**2)/spot_pos[l][2]))
                             Ar=4*(A1+A2)/width**2
                             dfc=-Ar*(dist-width/2-spot_pos[l][2])/(width/2+spot_pos[l][2])
-                    dfc -= dsp
+                        dfc -= dsp
                     afc+=dfc
 
 
