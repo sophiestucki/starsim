@@ -1259,6 +1259,13 @@ def compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk,rv_sp,rv,ccf
         flux_pix=(sccf[i]/Ngrid_in_ring[i])/flxph #brightness of 1 pixel normalized to total flux
 
         rvs_ring[i,:]= rv_sp + fun_dumusque(ccf)*1000*self.convective_shift #add solar spot bisector (in km/s, *1000 to convert to m/s). Multiply it by a CS factor.
+        
+        ### TEST: convective blueshift in mps spot
+        # if self.phoenix_spectra:
+        #     rvs_ring[i,:]= rv_sp + fun_dumusque(ccf)*1000*self.convective_shift #add solar spot bisector (in km/s, *1000 to convert to m/s). Multiply it by a CS factor.
+        # else:
+        #     print('Spot: Add CFIST')
+        #     rvs_ring[i,:]= rv_sp + fun_dumusque(ccf)*1000 * (0) #add solar spot bisector (in km/s, *1000 to convert to m/s). Multiply it by a CS factor.
 
         ccf_ring[i,:]=ccf*flux_pix #CCF values normalized to the contribution to the total flux of 1 pixel of this ring
         #Fer lo dels bisectors

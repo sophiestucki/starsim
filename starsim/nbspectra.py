@@ -321,6 +321,10 @@ def speed_bisector_nb(rv,ccf,integrated_bis):
                 cutleft=len(ynew)-i
                 break
 
+    #TEST
+    cutleft = 0
+    cutright = -1
+
     xnew=xnew[cutleft:cutright]
     ynew=ynew[cutleft:cutright]
     

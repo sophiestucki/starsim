@@ -294,7 +294,7 @@ class StarSim(object):
 
     def compute_forward(self,observables=['lc'],t=None,inversion=False, w='eq_2'):
     ##############################################################################
-    #SDO
+    #SDO: takes spot & faculae maps as input
     ##############################################################################
 
         if self.sdo_input:
@@ -319,6 +319,7 @@ class StarSim(object):
                     acd_ph, wvp_lc_ph, flns_lc =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
                     flnp_lc_ph = flnp_lc
 
+                    # if we want the same mu-grid as mps
                     if self.mps_mu_grid:
                         new_flns_lc = []
                         new_flnp_lc = []
@@ -344,21 +345,8 @@ class StarSim(object):
                 else:
                     print('MPS-ATLAS spectra')
                     acd, wvp_lc, flnp_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
-                    #spot spectra are not available for now
-                    acd_ph, _, flns_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-                    acd_ph, _, flnp_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
 
-                    flns_lc = []
-                    for i in range(len(acd)): #Loop for each ring, to compute the flux of the star.   
-
-                    #Interpolate Phoenix intensity models to correct projected ange:
-                        acd_low=np.max(acd_ph[acd_ph<acd[i]]) #angles above and below the proj. angle of the grid
-                        acd_upp=np.min(acd_ph[acd_ph>=acd[i]])
-                        idx_low=np.where(acd_ph==acd_low)[0][0]
-                        idx_upp=np.where(acd_ph==acd_upp)[0][0]
-                        flnp_lc_ph_acd = flnp_lc_ph[idx_low]+(flnp_lc_ph[idx_upp]-flnp_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low)
-
-                        flns_lc.append(flns_lc_ph[idx_low]+(flns_lc_ph[idx_upp]-flns_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low) / flnp_lc_ph_acd * flnp_lc[i])
+                    flns_lc = spectra.black_body(wvp_lc, self.temperature_spot) / spectra.black_body(wvp_lc, self.temperature_photosphere) * flnp_lc
                    
                     acd, wvp_lc, flfc_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
                     
@@ -406,9 +394,10 @@ class StarSim(object):
                 if self.phoenix_spectra:
                     wv_rv, flnp_rv, flp_rv =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
                     wv_rv, flns_rv, fls_rv =spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
+
                     
+
                     wv_rv, flnf_rv, flf_rv =spectra.interpolate_Phoenix(self,self.temperature_facula,self.logg)
-                    
                     spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
 
                     #for spots
@@ -423,6 +412,7 @@ class StarSim(object):
 
                     acd_ph, wv_rv_LR_ph, flpk_rv_ph = acd, wv_rv_LR, flpk_rv 
 
+                    # if we want the same mu-grid as mps
                     if self.mps_mu_grid:
 
                         new_flpk_rv = []
@@ -449,47 +439,26 @@ class StarSim(object):
                         flsk_rv = np.array(new_flsk_rv)
 
 
-                        
-
 
                 else:
                     wv_rv, flnp_rv, flp_rv =spectra.interpolate_mps(self, 'ph') #returns norm spectra and no normalized, interpolated at T and logg
-                    # spot's spectra not available
-                    _, flns_rv_ph, _ = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-                    _, flnp_rv_ph, _ =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-                    flns_rv = flns_rv_ph / flnp_rv_ph * flnp_rv
+                    flns_rv = spectra.black_body(wv_rv, self.temperature_spot) / spectra.black_body(wv_rv, self.temperature_photosphere) * flnp_rv
 
                     wv_rv, flnf_rv, flf_rv =spectra.interpolate_mps(self, 'fc')
                     spec_ref = flnp_rv #reference spectrum to compute CCF. Normalized
                     acd, wv_rv_LR, flpk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph') #acd is the angles at which the model is computed. 
                     # spot's spectra not available
 
-                    acd_ph, _, flns_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-                    acd_ph, _, flnp_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-
-                    flsk_rv = []
-                    for i in range(len(acd)): #Loop for each ring, to compute the flux of the star.   
-
-                        #Interpolate Phoenix intensity models to correct projected ange:
-                        acd_low=np.max(acd_ph[acd_ph<acd[i]]) #angles above and below the proj. angle of the grid
-                        acd_upp=np.min(acd_ph[acd_ph>=acd[i]])
-                        idx_low=np.where(acd_ph==acd_low)[0][0]
-                        idx_upp=np.where(acd_ph==acd_upp)[0][0]
-                        flnp_lc_ph_acd = flnp_lc_ph[idx_low]+(flnp_lc_ph[idx_upp]-flnp_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low)
-
-                        flsk_rv.append(flns_lc_ph[idx_low]+(flns_lc_ph[idx_upp]-flns_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low) / flnp_lc_ph_acd * flnp_rv[i])
+                    flsk_rv = spectra.black_body(wv_rv_LR, self.temperature_spot) / spectra.black_body(wv_rv_LR, self.temperature_photosphere) * flpk_rv
 
                     acd, wv_rv_LR, flfc_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
+
                 #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
                 rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
                 #CCF with phoenix model  
-                if self.ccf_template == 'model':
-                    ccf_ph = nbspectra.cross_correlation_nb(rv,wv_rv,flnp_rv,wv_rv,spec_ref)
-                    ccf_sp = nbspectra.cross_correlation_nb(rv,wv_rv,flns_rv,wv_rv,spec_ref)          
-                    ccf_fc = nbspectra.cross_correlation_nb(rv,wv_rv,flnf_rv,wv_rv,spec_ref)
+            
 
-
-                elif self.ccf_template == 'mask':
+                if self.ccf_template == 'mask':
                     if wv_rv.max()<(self.wvm.max()+1) or wv_rv.min()>(self.wvm.min()-1):
                         sys.exit('Selected wavelength must cover all the mask wavelength range, including 1A overhead covering RV shifts. Units in Angstroms.')
 
@@ -500,12 +469,20 @@ class StarSim(object):
 
                 #Compute the bisector of the three reference CCF and return a cubic spline f fiting it, such that rv=f(ccf).
                 fun_bis_ph = spectra.bisector_fit(self,rv,ccf_ph,plot_test=False,kind_interp=self.kind_interp)
-                rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
+                # fun_bis_ph_ph = spectra.bisector_fit(self,rv,ccf_ph_ph,plot_test=False,kind_interp=self.kind_interp)
+
                 fun_bis_sp = spectra.bisector_fit(self,rv,ccf_sp,plot_test=False,kind_interp=self.kind_interp)
-                rv_sp = rv - fun_bis_sp(ccf_sp)
-                rv_fc = rv_ph
-                fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)        
-                rv_fc = rv - fun_raw_xbisc(ccf_fc)
+                fun_raw_xbisc = spectra.bisector_fit(self,rv,ccf_fc,plot_test=False,kind_interp=self.kind_interp)  
+                
+                if self.phoenix_spectra:
+                    print('RV shift')
+                    rv_ph = rv - fun_bis_ph(ccf_ph) #subtract the bisector from the CCF.
+                    rv_sp = rv - fun_bis_sp(ccf_sp)
+                    rv_fc = rv - fun_raw_xbisc(ccf_fc)
+                else:
+                    rv_ph = rv 
+                    rv_sp = rv 
+                    rv_fc = rv
                 
 
                 if self.simulation_mode == 'grid':
@@ -513,7 +490,6 @@ class StarSim(object):
                     ccf_ph_g, flxph= spectra.compute_immaculate_photosphere_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_ph,rv,ccf_ph,rvel) #return ccf of each grid, and also the integrated ccf
                     ccf_ph_tot = np.sum(ccf_ph_g,axis=0)
                     ccf_sp_g = spectra.compute_immaculate_spot_rv(self,Ngrid_in_ring,acd,amu,pare,flsk_rv,rv_sp,rv,ccf_sp,flxph,rvel)
-                    ccf_fc_g = ccf_ph_g #to avoid errors, not used
                     # print('Computing facula. Limb brightening is hard coded. Luke Johnson 2021 maybe is better millor.')
                     ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flpk_rv,rv_fc,rv,ccf_fc,flxph,rvel, wv_rv_LR)
                     #ccf_fc_g = spectra.compute_immaculate_facula_rv(self,Ngrid_in_ring,acd,amu,pare,flfc_rv,rv_fc,rv,ccf_fc,flxph,rvel)
@@ -602,11 +578,11 @@ class StarSim(object):
                             new_flns_lc.append(flns_lc[idx_low]+(flns_lc[idx_upp]-flns_lc[idx_low])*(mu_t-acd_low)/(acd_upp-acd_low))
                             new_flnp_lc.append(flnp_lc[idx_low]+(flnp_lc[idx_upp]-flnp_lc[idx_low])*(mu_t-acd_low)/(acd_upp-acd_low))
 
-                        ### todo masks
+                       
                            
                         flnp_lc = new_flnp_lc
                         flns_lc = new_flns_lc
-                        flfc_lc = flnp_lc
+                        flfc_lc = np.copy(flnp_lc)
                         acd = np.linspace(0.1,1.0,10)
 
 
@@ -614,35 +590,13 @@ class StarSim(object):
                 else:
                     print('MPS-ATLAS spectra')
                     acd, wvp_lc, flnp_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'ph')
-                    #spot spectra are not available for now
-                    acd_ph, _, flns_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-                    acd_ph, _, flnp_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
 
-                    flns_lc = []
-                    for i in range(len(acd)): #Loop for each ring, to compute the flux of the star.   
-
-                    #Interpolate Phoenix intensity models to correct projected ange:
-                        acd_low=np.max(acd_ph[acd_ph<acd[i]]) #angles above and below the proj. angle of the grid
-                        acd_upp=np.min(acd_ph[acd_ph>=acd[i]])
-                        idx_low=np.where(acd_ph==acd_low)[0][0]
-                        idx_upp=np.where(acd_ph==acd_upp)[0][0]
-                        flnp_lc_ph_acd = flnp_lc_ph[idx_low]+(flnp_lc_ph[idx_upp]-flnp_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low)
-
-                        flns_lc.append(flns_lc_ph[idx_low]+(flns_lc_ph[idx_upp]-flns_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low) / flnp_lc_ph_acd * flnp_lc[i])
+                    flns_lc = spectra.black_body(wvp_lc, self.temperature_spot) / spectra.black_body(wvp_lc, self.temperature_photosphere) * flnp_lc
                    
                     if np.sum(self.active_region_types) > 0:
                         acd, wvp_lc, flfc_lc = spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
                     else:
                         flfc_lc = flnp_lc
-
-                # if self.mps_mu_grid:
-                #     print('LC: mu grid')
-                #     mask = np.loadtxt('/home/sophie-stucki/Documents/starsim_simulations/nina_spec/spectra_masks/lowres_mask.txt').astype(bool)
-                #     wvp_lc = wvp_lc[mask]
-                #     flnp_lc = np.array(flnp_lc)[:, mask]
-                #     flns_lc = np.array(flns_lc)[:, mask]
-                #     flfc_lc = np.array(flfc_lc)[:, mask]
-
 
 
                 if self.limb_lim < acd.min():
@@ -678,7 +632,6 @@ class StarSim(object):
                 self.results['typ'] = typ
                 self.results['flux'] =FLUX
                 self.results['flns_lc'] = flns_lc
-                self.results['flnp_lc_ph'] = flnp_lc_ph
                 self.results['flnp_lc'] = flnp_lc
                 self.results['wvp_lc'] = wvp_lc
                 self.results['acd'] = acd
@@ -689,7 +642,7 @@ class StarSim(object):
 
 
 
-            
+            ### OSCAR PART: MERGING IN PROGRESS => don't use it
             if 'spec' in observables:#Oscar: based on the procedure for the 'lc' simulation, simulate the spectra as a function of time. At the moment using LR templates as the 'lc' simulation.
                 
                 #Interpolate PHOENIX intensity models, only spot and photosphere
@@ -800,10 +753,7 @@ class StarSim(object):
 
                 else:
                     wv_rv, flnp_rv, flp_rv =spectra.interpolate_mps(self, 'ph') #returns norm spectra and no normalized, interpolated at T and logg
-                    # spot's spectra not available
-                    _, flns_rv_ph, _ = spectra.interpolate_Phoenix(self,self.temperature_spot,self.logg)
-                    _, flnp_rv_ph, _ =spectra.interpolate_Phoenix(self,self.temperature_photosphere,self.logg) #returns norm spectra and no normalized, interpolated at T and logg
-                    flns_rv = flns_rv_ph / flnp_rv_ph * flnp_rv
+                    flns_rv = spectra.black_body(wv_rv, self.temperature_spot) / spectra.black_body(wv_rv, self.temperature_photosphere) * flnp_rv
 
                     if np.sum(self.active_region_types)>0:
                         wv_rv, flnf_rv, flf_rv =spectra.interpolate_mps(self, 'fc')
@@ -811,38 +761,10 @@ class StarSim(object):
                     acd, wv_rv_LR, flpk_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'ph') #acd is the angles at which the model is computed. 
                     # spot's spectra not available
 
-                    acd_ph, _, flns_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_spot,self.logg)
-                    acd_ph, _, flnp_lc_ph =spectra.interpolate_Phoenix_mu_lc(self,self.temperature_photosphere,self.logg) #acd is the angles at which the model is computed. 
-
-                    flsk_rv = []
-                    for i in range(len(acd)): #Loop for each ring, to compute the flux of the star.   
-
-                        #Interpolate Phoenix intensity models to correct projected ange:
-                        acd_low=np.max(acd_ph[acd_ph<acd[i]]) #angles above and below the proj. angle of the grid
-                        acd_upp=np.min(acd_ph[acd_ph>=acd[i]])
-                        idx_low=np.where(acd_ph==acd_low)[0][0]
-                        idx_upp=np.where(acd_ph==acd_upp)[0][0]
-                        flnp_lc_ph_acd = flnp_lc_ph[idx_low]+(flnp_lc_ph[idx_upp]-flnp_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low)
-
-                        flsk_rv.append(flns_lc_ph[idx_low]+(flns_lc_ph[idx_upp]-flns_lc_ph[idx_low])*(acd[i]-acd_low)/(acd_upp-acd_low) / flnp_lc_ph_acd * flnp_rv[i])
+                    flsk_rv = spectra.black_body(wv_rv_LR, self.temperature_spot) / spectra.black_body(wv_rv_LR, self.temperature_photosphere) * flpk_rv
 
                     acd, wv_rv_LR, flfc_rv =spectra.load_MPS_ATLAS_spectra_lc(self, 'fc')
 
-                # if self.mps_mu_grid:
-                #     print('RV: mu grid')
-                #     mask_hr = np.loadtxt('/home/sophie-stucki/Documents/starsim_simulations/nina_spec/spectra_masks/hires_mask.txt').astype(bool)
-                #     wv_rv = wv_rv[mask_hr]
-                #     flnp_rv = flnp_rv[mask_hr]
-                #     flns_rv = flns_rv[mask_hr]
-                #     if np.sum(self.active_region_types)>0:
-                #         flnf_rv =  flnf_rv[mask_hr]
-
-                #     mask_lr = np.loadtxt('/home/sophie-stucki/Documents/starsim_simulations/nina_spec/spectra_masks/lowres_mask.txt').astype(bool)
-                #     wv_rv_LR = wv_rv_LR[mask_lr]
-                #     flpk_rv = np.array(flpk_rv)[:, mask_lr]
-                #     flsk_rv = np.array(flsk_rv)[:, mask_lr]
-                #     if np.sum(self.active_region_types)>0:
-                #         flnf_rv = np.array(flnf_rv)[:, mask_lr]
 
                 #Compute the CCF of the spectrum of each element againts the reference template (photosphere)
                 rv = np.arange(-self.ccf_rv_range,self.ccf_rv_range+self.ccf_rv_step,self.ccf_rv_step)
@@ -930,8 +852,6 @@ class StarSim(object):
                 self.results['ccf_ph'] = ccf_ph
                 self.results['ccf_sp'] = ccf_sp
                 self.results['ccf_fc'] = ccf_fc
-                self.results['flns_rv_ph'] = flns_rv_ph
-                self.results['flnp_rv_ph'] = flnp_rv_ph
                 self.results['flnp_rv'] = flnp_rv
                 self.results['wv_rv'] = wv_rv
 
@@ -943,7 +863,7 @@ class StarSim(object):
 
 
 
-
+            ### Chromatic effects: MERGING IN PROGRESS => don't use it
             if 'crx' in observables: #use HR templates in different wavelengths to compute chromatic index. Interpolate for temperatures and logg for different elements. Cut to desired wavelength.
                 if w == 'eq_2':
                     rotation_period_lat = 1/(1/self.rotation_period + (self.differential_rotation/(2.66) * (1.698 * np.sin(np.pi/2 - theta)**2 + 2.346 * np.sin(np.pi/2 - theta)**4))/360) #Add diff rotation
